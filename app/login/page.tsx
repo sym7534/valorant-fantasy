@@ -6,6 +6,8 @@ export default function Page() {
     <main>
       <Image src="/globe.svg" alt="Profile" width={100} height={100} />
       <Link href="/">Go to home</Link>
+      <h1 className="roboto-title">Valorant Fantasy</h1>
     </main>
   )
+  
 } 

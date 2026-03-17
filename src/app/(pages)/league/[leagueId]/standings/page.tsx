@@ -29,11 +29,11 @@ export default function StandingsPage() {
   return (
     <div className="space-y-8">
       <h1 className="text-2xl font-bold">Standings</h1>
-      <StandingsTable standings={standings} />
+      <StandingsTable standings={standings} currentUserId="" />
       <section>
         <h2 className="text-lg font-semibold mb-4 text-[#8b978f]">POINTS OVER TIME</h2>
         <div className="bg-[#1a2634] rounded p-4 border border-[#2a3a4d]">
-          <PointsChart standings={standings} />
+          <PointsChart members={[]} totalWeeks={12} />
         </div>
       </section>
     </div>

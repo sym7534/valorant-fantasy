@@ -81,8 +81,7 @@ export default function LeagueSettingsPage() {
         <Button variant="danger" onClick={() => setShowDeleteModal(true)}>Delete League</Button>
       </section>
 
-      {showDeleteModal && (
-        <Modal title="Delete League" onClose={() => setShowDeleteModal(false)}>
+      <Modal isOpen={showDeleteModal} title="Delete League" onClose={() => setShowDeleteModal(false)}>
           <p className="text-sm text-[#8b978f] mb-4">
             Type <strong className="text-[#ece8e1]">{league?.name}</strong> to confirm deletion.
           </p>
@@ -92,7 +91,6 @@ export default function LeagueSettingsPage() {
             <Button variant="secondary" onClick={() => setShowDeleteModal(false)}>Cancel</Button>
           </div>
         </Modal>
-      )}
     </div>
   )
 }

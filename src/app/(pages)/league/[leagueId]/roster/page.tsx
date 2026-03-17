@@ -8,14 +8,16 @@ import WeekSelector from '@/src/components/roster/WeekSelector'
 import WeeklyScoreBreakdown from '@/src/components/roster/WeeklyScoreBreakdown'
 import StarPlayerModal from '@/src/components/roster/StarPlayerModal'
 import { useRoster } from '@/src/hooks/useRoster'
+import type { RosterPlayer, WeeklyScore } from '@/src/lib/mock-data'
 
 export default function RosterPage() {
   const params = useParams()
   const leagueId = params.leagueId as string
-  const { roster, loading } = useRoster(leagueId)
+  const { roster, loading, activateStar } = useRoster(leagueId)
   const [selectedWeek, setSelectedWeek] = useState(1)
   const [starModalOpen, setStarModalOpen] = useState(false)
-  const [starCandidate, setStarCandidate] = useState<string | null>(null)
+  const [starPlayerName, setStarPlayerName] = useState('')
+  const [starPlayerId, setStarPlayerId] = useState('')
 
   if (loading) {
     return (
@@ -25,8 +27,18 @@ export default function RosterPage() {
     )
   }
 
-  const activePlayers = roster?.players?.filter((p: any) => p.slotType !== 'bench').slice(0, 5) ?? []
-  const benchPlayers = roster?.players?.slice(5) ?? []
+  // Build mock weeks for the selector
+  const weeks = Array.from({ length: 12 }, (_, i) => ({
+    weekNumber: i + 1,
+    isLive: i + 1 === selectedWeek,
+  }))
+
+  // Build empty weekly score for breakdown
+  const weeklyScore: WeeklyScore = {
+    weekNumber: selectedWeek,
+    totalPoints: 0,
+    playerScores: [],
+  }
 
   return (
     <div className="space-y-6">
@@ -40,37 +52,37 @@ export default function RosterPage() {
         </button>
       </div>
 
-      <WeekSelector currentWeek={selectedWeek} onWeekChange={setSelectedWeek} totalWeeks={12} />
+      <WeekSelector
+        weeks={weeks}
+        currentWeek={selectedWeek}
+        selectedWeek={selectedWeek}
+        onSelectWeek={setSelectedWeek}
+      />
 
       <section>
         <h2 className="text-lg font-semibold mb-4 text-[#8b978f]">ACTIVE LINEUP</h2>
-        <HeroView players={activePlayers} />
+        <HeroView activePlayers={[]} weeklyTotalPoints={0} />
       </section>
 
       <section>
         <h2 className="text-lg font-semibold mb-3 text-[#8b978f]">BENCH</h2>
-        <div className="space-y-2">
-          {benchPlayers.map((p: any) => (
-            <BenchRow key={p.id} player={p} onSwap={() => {}} />
-          ))}
-        </div>
+        <BenchRow benchPlayers={[]} />
       </section>
 
       <section>
         <h2 className="text-lg font-semibold mb-3 text-[#8b978f]">WEEKLY SCORE BREAKDOWN</h2>
-        <WeeklyScoreBreakdown players={activePlayers} week={selectedWeek} />
+        <WeeklyScoreBreakdown weeklyScore={weeklyScore} />
       </section>
 
-      {starModalOpen && (
-        <StarPlayerModal
-          players={activePlayers}
-          onConfirm={(playerId) => {
-            setStarCandidate(playerId)
-            setStarModalOpen(false)
-          }}
-          onClose={() => setStarModalOpen(false)}
-        />
-      )}
+      <StarPlayerModal
+        isOpen={starModalOpen}
+        onClose={() => setStarModalOpen(false)}
+        playerName={starPlayerName || 'Select a player'}
+        onConfirm={() => {
+          if (starPlayerId) activateStar(starPlayerId)
+          setStarModalOpen(false)
+        }}
+      />
     </div>
   )
 }

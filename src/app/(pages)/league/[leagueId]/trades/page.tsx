@@ -10,7 +10,7 @@ export default function TradesPage() {
   return (
     <div className="space-y-6">
       <h1 className="text-2xl font-bold">Trade Hub</h1>
-      <TradeHub leagueId={leagueId} />
+      <TradeHub currentUserId="" />
     </div>
   )
 }

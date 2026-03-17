@@ -42,7 +42,7 @@ export default function PlayersPage() {
         </div>
         <Select
           value={region}
-          onChange={(e) => setRegion(e.target.value)}
+          onChange={setRegion}
           options={[
             { label: 'All Regions', value: '' },
             { label: 'Americas', value: 'Americas' },
@@ -53,7 +53,7 @@ export default function PlayersPage() {
         />
         <Select
           value={role}
-          onChange={(e) => setRole(e.target.value)}
+          onChange={setRole}
           options={[
             { label: 'All Roles', value: '' },
             { label: 'Duelist', value: 'Duelist' },

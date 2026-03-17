@@ -1,99 +1,254 @@
 'use client';
 
-import { useState, useCallback, useEffect } from 'react';
-import { useSocket } from './useSocket';
-import type { DraftState, DraftPick } from '@/src/lib/mock-data';
-import { MOCK_DRAFT_STATE, MOCK_DRAFT_PICKS, MOCK_PLAYERS } from '@/src/lib/mock-data';
+import { useCallback, useEffect, useMemo, useState } from 'react';
+import type {
+  DraftGetResponse,
+  DraftQueueEntry,
+  DraftStateResponse,
+  SocketDraftCompletePayload,
+  SocketDraftTimerPayload,
+} from '@/src/lib/api-types';
+import { useSocket } from '@/src/hooks/useSocket';
 
-interface UseDraftReturn {
-  draftState: DraftState | null;
-  isMyTurn: boolean;
-  secondsRemaining: number;
-  makePick: (playerId: string) => void;
+type DraftApiError = {
+  error?: string;
+};
+
+type UseDraftReturn = {
+  data: DraftGetResponse | null;
+  loading: boolean;
+  error: string | null;
   isConnected: boolean;
+  isMyTurn: boolean;
+  currentPickerUserId: string | null;
+  secondsRemaining: number;
   draftedPlayerIds: string[];
+  refresh: () => Promise<void>;
+  makePick: (playerId: string) => Promise<void>;
+  updateQueue: (playerIds: string[]) => Promise<void>;
+  setDraftState: (draft: DraftStateResponse) => void;
+};
+
+function filterQueueByDraftState(
+  queue: DraftQueueEntry[],
+  draft: DraftStateResponse
+): DraftQueueEntry[] {
+  const draftedPlayerIds = new Set(draft.picks.map((pick) => pick.playerId));
+  return queue.filter((entry) => !draftedPlayerIds.has(entry.playerId));
+}
+
+function getCurrentPickerUserId(
+  draftOrder: string[],
+  round: number,
+  pickIndex: number
+): string {
+  return round % 2 === 0
+    ? draftOrder[draftOrder.length - 1 - pickIndex]
+    : draftOrder[pickIndex];
 }
 
 export function useDraft(leagueId: string, userId: string): UseDraftReturn {
-  void leagueId;
-  const { isConnected, emit } = useSocket();
+  const { emit, on, off, isConnected } = useSocket();
+  const [data, setData] = useState<DraftGetResponse | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+  const [secondsRemaining, setSecondsRemaining] = useState(0);
 
-  // TEMPORARY: Use mock data. Replace with socket events when backend is ready.
-  const [draftState, setDraftState] = useState<DraftState | null>(null);
-  const [secondsRemaining, setSecondsRemaining] = useState(60);
+  const refresh = useCallback(async (): Promise<void> => {
+    if (!leagueId) {
+      setData(null);
+      setLoading(false);
+      return;
+    }
+
+    setLoading(true);
+    setError(null);
+
+    try {
+      const response = await fetch(`/api/leagues/${leagueId}/draft`, {
+        cache: 'no-store',
+      });
+      const payload = (await response.json()) as DraftGetResponse & DraftApiError;
+
+      if (!response.ok || payload.error || !payload.draft) {
+        throw new Error(payload.error ?? 'Failed to load draft');
+      }
+
+      setData({
+        ...payload,
+        queue: filterQueueByDraftState(payload.queue, payload.draft),
+      });
+      setSecondsRemaining(payload.draft.timeRemaining ?? 0);
+    } catch (error) {
+      setError(error instanceof Error ? error.message : 'Failed to load draft');
+    } finally {
+      setLoading(false);
+    }
+  }, [leagueId]);
 
   useEffect(() => {
-    // Simulate receiving draft state
-    const timer = setTimeout(() => {
-      setDraftState(MOCK_DRAFT_STATE);
-    }, 500);
-    return () => clearTimeout(timer);
-  }, []);
+    void refresh();
+  }, [refresh]);
 
-  // Mock countdown
   useEffect(() => {
-    if (!draftState || draftState.status !== 'IN_PROGRESS') return;
-    const interval = setInterval(() => {
-      setSecondsRemaining((prev) => (prev > 0 ? prev - 1 : 60));
-    }, 1000);
-    return () => clearInterval(interval);
-  }, [draftState]);
+    if (!isConnected || !leagueId) {
+      return;
+    }
 
-  const currentDrafter = draftState
-    ? draftState.currentRound % 2 === 1
-      ? draftState.draftOrder[draftState.currentPickIndex]
-      : draftState.draftOrder[draftState.draftOrder.length - 1 - draftState.currentPickIndex]
-    : null;
+    emit('draft:join', { leagueId });
+  }, [emit, isConnected, leagueId]);
 
-  const isMyTurn = currentDrafter === userId;
+  useEffect(() => {
+    const handleDraftState = (...args: unknown[]): void => {
+      const [payload] = args;
+      const draft = payload as DraftStateResponse;
+      setData((current) => {
+        if (!current) {
+          return current;
+        }
 
-  const draftedPlayerIds = draftState?.picks.map((p) => p.playerId) ?? [];
-
-  const makePick = useCallback(
-    (playerId: string): void => {
-      if (!isMyTurn || !draftState) return;
-
-      const player = MOCK_PLAYERS.find((p) => p.id === playerId);
-      if (!player) return;
-
-      // BLOCKED: Replace with socket emit
-      emit('draft:pick', { leagueId, playerId });
-
-      // Optimistic update for mock
-      const newPick: DraftPick = {
-        id: `dp-${Date.now()}`,
-        userId,
-        userName: 'AcePlayer',
-        playerId,
-        playerName: player.name,
-        playerTeam: player.team,
-        playerRole: player.role,
-        playerRegion: player.region,
-        round: draftState.currentRound,
-        pickNumber: MOCK_DRAFT_PICKS.length + 1,
-        isCaptain: draftState.currentRound === 1,
-        pickedAt: new Date().toISOString(),
-      };
-
-      setDraftState((prev) => {
-        if (!prev) return prev;
         return {
-          ...prev,
-          picks: [...prev.picks, newPick],
-          currentPickIndex: prev.currentPickIndex + 1,
+          ...current,
+          draft,
+          queue: filterQueueByDraftState(current.queue, draft),
         };
       });
-      setSecondsRemaining(60);
-    },
-    [isMyTurn, draftState, emit, leagueId, userId]
+      setSecondsRemaining(draft.timeRemaining ?? 0);
+    };
+
+    const handleTimer = (...args: unknown[]): void => {
+      const [payload] = args;
+      const timerPayload = payload as SocketDraftTimerPayload;
+      setSecondsRemaining(timerPayload.secondsRemaining);
+    };
+
+    const handleComplete = (...args: unknown[]): void => {
+      const [payload] = args;
+      void (payload as SocketDraftCompletePayload);
+      setData((current) =>
+        current
+          ? {
+              ...current,
+              draft: {
+                ...current.draft,
+                status: 'COMPLETE',
+                timeRemaining: 0,
+              },
+            }
+          : current
+      );
+      setSecondsRemaining(0);
+    };
+
+    on('draft:state', handleDraftState);
+    on('draft:timer', handleTimer);
+    on('draft:complete', handleComplete);
+
+    return () => {
+      off('draft:state', handleDraftState);
+      off('draft:timer', handleTimer);
+      off('draft:complete', handleComplete);
+    };
+  }, [off, on]);
+
+  const currentPickerUserId = useMemo(() => {
+    if (!data?.draft || data.draft.status !== 'IN_PROGRESS') {
+      return null;
+    }
+
+    return getCurrentPickerUserId(
+      data.draft.draftOrder,
+      data.draft.currentRound,
+      data.draft.currentPickIndex
+    );
+  }, [data]);
+
+  const draftedPlayerIds = useMemo(
+    () => data?.draft.picks.map((pick) => pick.playerId) ?? [],
+    [data]
   );
 
+  const makePick = useCallback(
+    async (playerId: string): Promise<void> => {
+      const response = await fetch(`/api/leagues/${leagueId}/draft/pick`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ playerId }),
+      });
+      const payload = (await response.json()) as { draft?: DraftStateResponse; error?: string };
+
+      if (!response.ok || payload.error || !payload.draft) {
+        throw new Error(payload.error ?? 'Failed to make draft pick');
+      }
+
+      setData((current) =>
+        current
+          ? {
+              ...current,
+              draft: payload.draft!,
+              queue: filterQueueByDraftState(current.queue, payload.draft!),
+            }
+          : current
+      );
+      setSecondsRemaining(payload.draft.timeRemaining ?? 0);
+    },
+    [leagueId]
+  );
+
+  const updateQueue = useCallback(
+    async (playerIds: string[]): Promise<void> => {
+      const response = await fetch(`/api/leagues/${leagueId}/draft/queue`, {
+        method: 'PUT',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ playerIds }),
+      });
+      const payload = (await response.json()) as { queue?: DraftQueueEntry[]; error?: string };
+
+      if (!response.ok || payload.error || !payload.queue) {
+        throw new Error(payload.error ?? 'Failed to update draft queue');
+      }
+
+      setData((current) =>
+        current
+          ? {
+              ...current,
+              queue: filterQueueByDraftState(payload.queue!, current.draft),
+            }
+          : current
+      );
+    },
+    [leagueId]
+  );
+
+  const setDraftState = useCallback((draft: DraftStateResponse): void => {
+    setData((current) =>
+      current
+        ? {
+            ...current,
+            draft,
+            queue: filterQueueByDraftState(current.queue, draft),
+          }
+        : current
+    );
+    setSecondsRemaining(draft.timeRemaining ?? 0);
+  }, []);
+
   return {
-    draftState,
-    isMyTurn,
-    secondsRemaining,
-    makePick,
+    data,
+    loading,
+    error,
     isConnected,
+    isMyTurn: currentPickerUserId === (data?.currentUserId ?? userId),
+    currentPickerUserId,
+    secondsRemaining,
     draftedPlayerIds,
+    refresh,
+    makePick,
+    updateQueue,
+    setDraftState,
   };
 }

@@ -52,6 +52,7 @@ export type DraftStatus = 'WAITING' | 'IN_PROGRESS' | 'COMPLETE';
  * A player's designation on a roster, which determines their scoring multiplier.
  * - captain: Permanent 2x multiplier (determined by Round 1 draft pick).
  * - star: Temporary 3x multiplier for one week, with a 2-week cooldown after.
+ *   Captains cannot be designated as star players.
  * - normal: Default 1x multiplier.
  */
 export type PlayerDesignation = 'captain' | 'star' | 'normal';
@@ -137,14 +138,14 @@ export const CAPTAIN_MULTIPLIER: number = 2;
 
 /**
  * Star Player multiplier — 3x for one week only.
- * Star overrides Captain (3x, NOT 6x) when a Captain is also starred.
+ * Only non-captains can be designated as Star Players.
  */
 export const STAR_PLAYER_MULTIPLIER: number = 3;
 
 /**
  * Number of weeks a player must wait after being starred before
  * they can be starred again. During cooldown they can still play
- * in the active lineup at their normal multiplier (1x or 2x for Captain).
+ * in the active lineup at their normal multiplier.
  */
 export const STAR_PLAYER_COOLDOWN_WEEKS: number = 2;
 
@@ -302,7 +303,7 @@ export function calculateBaseScore(stats: PlayerMatchStats): number {
  * Applies the appropriate scoring multiplier based on the player's designation.
  *
  * - captain: 2x (permanent for the entire season)
- * - star: 3x (one week only; star OVERRIDES captain, does NOT stack to 6x)
+ * - star: 3x (one week only; captains cannot be starred)
  * - normal: 1x
  *
  * @param baseScore - The unmultiplied fantasy score from {@link calculateBaseScore}.

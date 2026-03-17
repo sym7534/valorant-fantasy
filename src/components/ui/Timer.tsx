@@ -22,7 +22,6 @@ export default function Timer({
   const [remaining, setRemaining] = useState<number>(calculateRemaining);
 
   useEffect(() => {
-    setRemaining(calculateRemaining());
     const interval = setInterval(() => {
       const left = calculateRemaining();
       setRemaining(left);

@@ -1,11 +1,10 @@
 import React from 'react';
 import Card from '@/src/components/ui/Card';
 import Badge from '@/src/components/ui/Badge';
-import type { League } from '@/src/lib/mock-data';
+import type { LeagueSummary } from '@/src/lib/api-types';
 
 interface LeagueCardProps {
-  league: League;
-  userRank?: number;
+  league: LeagueSummary;
   onClick?: () => void;
   className?: string;
 }
@@ -26,7 +25,6 @@ const statusLabel: Record<string, string> = {
 
 export default function LeagueCard({
   league,
-  userRank,
   onClick,
   className = '',
 }: LeagueCardProps): React.ReactElement {
@@ -43,10 +41,9 @@ export default function LeagueCard({
             </Badge>
           </div>
 
-          <div className="flex items-center gap-4 mt-2">
+          <div className="flex items-center gap-4 mt-2 flex-wrap">
             <span className="text-xs text-[var(--text-secondary)]">
-              <span className="text-[var(--text-primary)] font-semibold">{league.memberCount}</span>
-              /{league.maxMembers} members
+              <span className="text-[var(--text-primary)] font-semibold">{league.memberCount}</span> members
             </span>
             <span className="text-xs text-[var(--text-secondary)]">
               Roster: <span className="text-[var(--text-primary)] font-semibold">{league.rosterSize}</span>
@@ -57,17 +54,23 @@ export default function LeagueCard({
           </div>
         </div>
 
-        {userRank !== undefined && (
+        {league.myRank !== null && (
           <div className="text-right shrink-0">
             <p className="text-[10px] text-[var(--text-muted)] uppercase tracking-wider">Rank</p>
             <p className="text-2xl font-bold font-[family-name:var(--font-display)] text-[var(--accent-gold)]">
-              #{userRank}
+              #{league.myRank}
             </p>
           </div>
         )}
       </div>
 
-      {/* Subtle bottom accent */}
+      <div className="mt-4 flex items-center justify-between text-xs text-[var(--text-secondary)]">
+        <span>Week {league.currentWeek}</span>
+        <span className="text-[var(--accent-gold)]">
+          {league.totalPoints !== null ? `${league.totalPoints.toFixed(1)} pts` : 'Season not started'}
+        </span>
+      </div>
+
       <div className="mt-4 h-0.5 bg-gradient-to-r from-[var(--accent-red)] via-transparent to-transparent opacity-30" />
     </Card>
   );

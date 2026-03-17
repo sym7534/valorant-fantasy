@@ -1,255 +1,551 @@
-import { prisma } from '@/src/lib/prisma'
-import { CAPTAIN_ROUND, ROLE_SLOTS_BY_ROSTER_SIZE, REGION_MIN_PER, REGIONS } from '@/src/lib/game-config'
-import type { Region, PlayerRole } from '@/src/lib/game-config'
+import { Prisma, type LeagueMember, type PlayerRole, type Roster, type SlotType } from '@prisma/client';
+import { prisma } from '@/src/lib/prisma';
+import {
+  CAPTAIN_ROUND,
+  MIN_LEAGUE_SIZE,
+  ROLE_SLOTS_BY_ROSTER_SIZE,
+} from '@/src/lib/game-config';
+import type { DraftPickEntry, DraftStateResponse } from '@/src/lib/api-types';
+import {
+  buildDraftStateResponse,
+  toDraftPickEntry,
+} from '@/src/server/serializers';
 
-/**
- * Get the snake-draft order index for a given overall pick number.
- * Snake draft: odd rounds go left→right, even rounds go right→left.
- */
-export function getSnakeIndex(pickNumber: number, memberCount: number): number {
-  const round = Math.ceil(pickNumber / memberCount)
-  const positionInRound = ((pickNumber - 1) % memberCount)
-  // Odd rounds (1,3,5...) go forward, even rounds (2,4,6...) go reverse
-  if (round % 2 === 1) {
-    return positionInRound
-  } else {
-    return memberCount - 1 - positionInRound
-  }
-}
+const userSummarySelect = {
+  id: true,
+  name: true,
+  image: true,
+} satisfies Prisma.UserSelect;
 
-/**
- * Get the userId whose turn it is to pick for a given pick number.
- */
-export function getCurrentDrafter(draftOrder: string[], pickNumber: number): string {
-  const index = getSnakeIndex(pickNumber, draftOrder.length)
-  return draftOrder[index]
-}
+const playerSummarySelect = {
+  id: true,
+  name: true,
+  team: true,
+  region: true,
+  role: true,
+  imageUrl: true,
+} satisfies Prisma.PlayerSelect;
 
-/**
- * Determine the next pick number after all existing picks.
- */
-export async function getNextPickNumber(draftStateId: string): Promise<number> {
-  const count = await prisma.draftPick.count({ where: { draftStateId } })
-  return count + 1
-}
+const draftStateInclude = {
+  picks: {
+    include: {
+      user: {
+        select: userSummarySelect,
+      },
+      player: {
+        select: playerSummarySelect,
+      },
+    },
+    orderBy: {
+      pickNumber: 'asc',
+    },
+  },
+} satisfies Prisma.DraftStateInclude;
 
-/**
- * Get the current round based on pick count and member count.
- */
-export function getRound(pickNumber: number, memberCount: number): number {
-  return Math.ceil(pickNumber / memberCount)
-}
+type DbClient = typeof prisma | Prisma.TransactionClient;
 
-/**
- * Check if a player is already drafted in this draft.
- */
-export async function isPlayerDrafted(draftStateId: string, playerId: string): Promise<boolean> {
-  const pick = await prisma.draftPick.findFirst({
-    where: { draftStateId, playerId },
-  })
-  return pick !== null
-}
+type HydratedDraftState = Prisma.DraftStateGetPayload<{
+  include: typeof draftStateInclude;
+}>;
 
-/**
- * Validate roster constraints for a potential pick.
- * Checks role slot availability and region minimums.
- */
-export async function validatePickConstraints(
-  draftStateId: string,
-  userId: string,
-  playerId: string,
-  rosterSize: number
-): Promise<{ valid: boolean; reason?: string }> {
-  const player = await prisma.player.findUnique({ where: { id: playerId } })
-  if (!player) return { valid: false, reason: 'Player not found' }
+export type DraftMutationResult = {
+  draft: DraftStateResponse;
+  pick: DraftPickEntry | null;
+  skippedUserId: string | null;
+  didComplete: boolean;
+};
 
-  const existingPicks = await prisma.draftPick.findMany({
-    where: { draftStateId, userId },
-    include: { player: true },
-  })
+export function getCurrentPickerUserId(
+  draftOrder: string[],
+  round: number,
+  pickIndex: number
+): string {
+  const isReverseRound = round % 2 === 0;
 
-  if (existingPicks.length >= rosterSize) {
-    return { valid: false, reason: 'Roster is full' }
+  if (isReverseRound) {
+    return draftOrder[draftOrder.length - 1 - pickIndex];
   }
 
-  const roleSlots = ROLE_SLOTS_BY_ROSTER_SIZE[rosterSize]
-  if (!roleSlots) return { valid: false, reason: 'Invalid roster size' }
+  return draftOrder[pickIndex];
+}
 
-  // Count current role distribution
-  const roleCounts: Record<string, number> = { Duelist: 0, Initiator: 0, Controller: 0, Sentinel: 0, Wildcard: 0 }
-  for (const pick of existingPicks) {
-    const role = pick.player.role as string
-    if (roleCounts[role] !== undefined && roleCounts[role] < roleSlots[role as keyof typeof roleSlots]) {
-      roleCounts[role]++
-    } else {
-      roleCounts['Wildcard']++
+export function getTurnNumber(round: number, pickIndex: number, memberCount: number): number {
+  return (round - 1) * memberCount + pickIndex + 1;
+}
+
+function nextTurnExpiresAt(seconds: number): Date {
+  return new Date(Date.now() + seconds * 1000);
+}
+
+function getNextTurn(
+  currentRound: number,
+  currentPickIndex: number,
+  memberCount: number,
+  totalRounds: number
+): {
+  nextRound: number;
+  nextPickIndex: number;
+  didComplete: boolean;
+} {
+  let nextRound = currentRound;
+  let nextPickIndex = currentPickIndex + 1;
+
+  if (nextPickIndex >= memberCount) {
+    nextRound += 1;
+    nextPickIndex = 0;
+  }
+
+  if (nextRound > totalRounds) {
+    return {
+      nextRound: currentRound,
+      nextPickIndex: currentPickIndex,
+      didComplete: true,
+    };
+  }
+
+  return {
+    nextRound,
+    nextPickIndex,
+    didComplete: false,
+  };
+}
+
+export function determineSlotType(
+  rosterSize: number,
+  playerRole: PlayerRole,
+  existingSlotTypes: SlotType[]
+): SlotType {
+  const slotConfig = ROLE_SLOTS_BY_ROSTER_SIZE[rosterSize];
+  const filledCounts = existingSlotTypes.reduce<Record<SlotType, number>>(
+    (counts, slotType) => {
+      counts[slotType] += 1;
+      return counts;
+    },
+    {
+      Duelist: 0,
+      Initiator: 0,
+      Controller: 0,
+      Sentinel: 0,
+      Wildcard: 0,
+    }
+  );
+
+  if (filledCounts[playerRole] < slotConfig[playerRole]) {
+    return playerRole;
+  }
+
+  if (filledCounts.Wildcard < slotConfig.Wildcard) {
+    return 'Wildcard';
+  }
+
+  for (const slotType of Object.keys(slotConfig) as SlotType[]) {
+    if (filledCounts[slotType] < slotConfig[slotType]) {
+      return slotType;
     }
   }
 
-  // Check if the new player's role has an open slot, or if wildcard is available
-  const playerRole = player.role as string
-  if (roleCounts[playerRole] < roleSlots[playerRole as keyof typeof roleSlots]) {
-    // Fits in role slot
-  } else if (roleCounts['Wildcard'] < roleSlots.Wildcard) {
-    // Fits in wildcard slot
-  } else {
-    return { valid: false, reason: `No available slot for ${player.role}` }
-  }
-
-  return { valid: true }
+  return 'Wildcard';
 }
 
-/**
- * Make a draft pick. Validates it's the right user's turn, player is available,
- * and constraints are met. Round 1 picks are auto-captains.
- */
-export async function makePick(
+async function fetchHydratedDraftState(
+  client: DbClient,
+  leagueId: string
+): Promise<HydratedDraftState | null> {
+  return client.draftState.findUnique({
+    where: { leagueId },
+    include: draftStateInclude,
+  });
+}
+
+async function ensureLeagueMember(
+  client: DbClient,
+  leagueId: string,
+  userId: string
+): Promise<LeagueMember> {
+  const membership = await client.leagueMember.findUnique({
+    where: {
+      leagueId_userId: {
+        leagueId,
+        userId,
+      },
+    },
+  });
+
+  if (!membership) {
+    throw new Error('Not a member of this league');
+  }
+
+  return membership;
+}
+
+async function getOrCreateRoster(
+  tx: Prisma.TransactionClient,
+  membershipId: string,
+  leagueId: string
+): Promise<Roster> {
+  const existingRoster = await tx.roster.findUnique({
+    where: {
+      leagueMemberId: membershipId,
+    },
+  });
+
+  if (existingRoster) {
+    return existingRoster;
+  }
+
+  return tx.roster.create({
+    data: {
+      leagueMemberId: membershipId,
+      leagueId,
+    },
+  });
+}
+
+export async function getDraftStateResponse(leagueId: string): Promise<DraftStateResponse | null> {
+  const draftState = await fetchHydratedDraftState(prisma, leagueId);
+  return draftState ? buildDraftStateResponse(draftState) : null;
+}
+
+export async function startDraft(
+  leagueId: string,
+  userId: string
+): Promise<DraftStateResponse> {
+  const league = await prisma.league.findUnique({
+    where: { id: leagueId },
+    include: {
+      members: {
+        orderBy: { joinedAt: 'asc' },
+      },
+      draft: true,
+    },
+  });
+
+  if (!league) {
+    throw new Error('League not found');
+  }
+
+  if (league.creatorId !== userId) {
+    throw new Error('Only the league creator can start the draft');
+  }
+
+  if (league.status !== 'SETUP') {
+    throw new Error('Draft has already started');
+  }
+
+  if (league.members.length < MIN_LEAGUE_SIZE) {
+    throw new Error(`At least ${MIN_LEAGUE_SIZE} members are required to start the draft`);
+  }
+
+  const draftOrder = league.members.map((member) => member.userId);
+  for (let index = draftOrder.length - 1; index > 0; index -= 1) {
+    const swapIndex = Math.floor(Math.random() * (index + 1));
+    [draftOrder[index], draftOrder[swapIndex]] = [draftOrder[swapIndex], draftOrder[index]];
+  }
+
+  await prisma.$transaction(async (tx) => {
+    await tx.league.update({
+      where: { id: leagueId },
+      data: { status: 'DRAFTING' },
+    });
+
+    if (league.draft) {
+      await tx.draftPick.deleteMany({
+        where: {
+          draftStateId: league.draft.id,
+        },
+      });
+
+      await tx.draftState.update({
+        where: { id: league.draft.id },
+        data: {
+          status: 'IN_PROGRESS',
+          currentRound: 1,
+          currentPickIndex: 0,
+          draftOrder,
+          startedAt: new Date(),
+          completedAt: null,
+          turnExpiresAt: nextTurnExpiresAt(league.draftPickTime),
+        },
+      });
+    } else {
+      await tx.draftState.create({
+        data: {
+          leagueId,
+          status: 'IN_PROGRESS',
+          currentRound: 1,
+          currentPickIndex: 0,
+          draftOrder,
+          startedAt: new Date(),
+          turnExpiresAt: nextTurnExpiresAt(league.draftPickTime),
+        },
+      });
+    }
+  });
+
+  const draftState = await fetchHydratedDraftState(prisma, leagueId);
+  if (!draftState) {
+    throw new Error('Failed to start the draft');
+  }
+
+  return buildDraftStateResponse(draftState);
+}
+
+export async function makeDraftPick(
   leagueId: string,
   userId: string,
   playerId: string
-): Promise<{ success: boolean; error?: string; pick?: { id: string; round: number; pickNumber: number; isCaptain: boolean } }> {
-  const draft = await prisma.draftState.findUnique({
-    where: { leagueId },
-    include: { league: true },
-  })
+): Promise<DraftMutationResult> {
+  await ensureLeagueMember(prisma, leagueId, userId);
 
-  if (!draft) return { success: false, error: 'No draft found' }
-  if (draft.status !== 'IN_PROGRESS') return { success: false, error: 'Draft is not in progress' }
+  const draftState = await fetchHydratedDraftState(prisma, leagueId);
+  if (!draftState || draftState.status !== 'IN_PROGRESS') {
+    throw new Error('Draft is not currently active');
+  }
 
-  const draftOrder = draft.draftOrder as string[]
-  const nextPick = await getNextPickNumber(draft.id)
-  const totalPicks = draftOrder.length * draft.league.rosterSize
+  const league = await prisma.league.findUnique({
+    where: { id: leagueId },
+  });
 
-  if (nextPick > totalPicks) return { success: false, error: 'Draft is complete' }
+  if (!league) {
+    throw new Error('League not found');
+  }
 
-  const currentDrafter = getCurrentDrafter(draftOrder, nextPick)
-  if (currentDrafter !== userId) return { success: false, error: 'Not your turn' }
+  const currentPickerUserId = getCurrentPickerUserId(
+    draftState.draftOrder as string[],
+    draftState.currentRound,
+    draftState.currentPickIndex
+  );
+  const draftOrder = draftState.draftOrder as string[];
 
-  const alreadyDrafted = await isPlayerDrafted(draft.id, playerId)
-  if (alreadyDrafted) return { success: false, error: 'Player already drafted' }
+  if (currentPickerUserId !== userId) {
+    throw new Error('It is not your turn to pick');
+  }
 
-  const constraints = await validatePickConstraints(draft.id, userId, playerId, draft.league.rosterSize)
-  if (!constraints.valid) return { success: false, error: constraints.reason }
+  const player = await prisma.player.findUnique({
+    where: { id: playerId },
+    select: playerSummarySelect,
+  });
 
-  const round = getRound(nextPick, draftOrder.length)
-  const isCaptain = round === CAPTAIN_ROUND
+  if (!player) {
+    throw new Error('Player not found');
+  }
 
-  const pick = await prisma.$transaction(async (tx) => {
-    const newPick = await tx.draftPick.create({
+  if (draftState.picks.some((pick) => pick.playerId === playerId)) {
+    throw new Error('That player has already been drafted');
+  }
+
+  const existingSlotTypes = draftState.picks
+    .filter((pick) => pick.userId === userId)
+    .map((pick) => pick.slotType);
+  const slotType = determineSlotType(league.rosterSize, player.role, existingSlotTypes);
+  const pickNumber = getTurnNumber(
+    draftState.currentRound,
+    draftState.currentPickIndex,
+    draftOrder.length
+  );
+  const isCaptain = draftState.currentRound === CAPTAIN_ROUND;
+  const nextTurn = getNextTurn(
+    draftState.currentRound,
+    draftState.currentPickIndex,
+    draftOrder.length,
+    league.rosterSize
+  );
+
+  const createdPick = await prisma.$transaction(async (tx) => {
+    const membership = await ensureLeagueMember(tx, leagueId, userId);
+    const roster = await getOrCreateRoster(tx, membership.id, leagueId);
+
+    const pick = await tx.draftPick.create({
       data: {
-        draftStateId: draft.id,
+        draftStateId: draftState.id,
         userId,
         playerId,
-        round,
-        pickNumber: nextPick,
+        round: draftState.currentRound,
+        pickNumber,
         isCaptain,
+        slotType,
       },
-    })
+      include: {
+        user: {
+          select: userSummarySelect,
+        },
+        player: {
+          select: playerSummarySelect,
+        },
+      },
+    });
 
-    // Create/update roster with this player
-    let roster = await tx.roster.findFirst({
-      where: { leagueId, leagueMember: { userId } },
-    })
-
-    if (!roster) {
-      const member = await tx.leagueMember.findUniqueOrThrow({
-        where: { leagueId_userId: { leagueId, userId } },
-      })
-      roster = await tx.roster.create({
-        data: { leagueMemberId: member.id, leagueId },
-      })
-    }
-
-    const player = await tx.player.findUniqueOrThrow({ where: { id: playerId } })
-
-    // Determine slot type
-    const existingSlots = await tx.rosterPlayer.findMany({ where: { rosterId: roster.id } })
-    const roleSlots = ROLE_SLOTS_BY_ROSTER_SIZE[draft.league.rosterSize]
-    const roleCounts: Record<string, number> = { Duelist: 0, Initiator: 0, Controller: 0, Sentinel: 0, Wildcard: 0 }
-    for (const slot of existingSlots) {
-      // We need the slot type from the existing record
-      roleCounts[slot.slotType]++
-    }
-
-    let slotType: string = player.role
-    if (roleCounts[player.role] >= (roleSlots[player.role as keyof typeof roleSlots] ?? 0)) {
-      slotType = 'Wildcard'
-    }
+    await tx.draftQueueEntry.deleteMany({
+      where: {
+        leagueId,
+        playerId,
+      },
+    });
 
     await tx.rosterPlayer.create({
       data: {
         rosterId: roster.id,
         playerId,
         isCaptain,
-        slotType: slotType as 'Duelist' | 'Initiator' | 'Controller' | 'Sentinel' | 'Wildcard',
+        slotType,
       },
-    })
-
-    // Update draft state
-    const newNextPick = nextPick + 1
-    const isComplete = newNextPick > totalPicks
+    });
 
     await tx.draftState.update({
-      where: { id: draft.id },
-      data: {
-        currentRound: getRound(Math.min(newNextPick, totalPicks), draftOrder.length),
-        currentPickIndex: ((newNextPick - 1) % draftOrder.length),
-        status: isComplete ? 'COMPLETE' : 'IN_PROGRESS',
-        completedAt: isComplete ? new Date() : undefined,
-      },
-    })
+      where: { id: draftState.id },
+      data: nextTurn.didComplete
+        ? {
+            status: 'COMPLETE',
+            completedAt: new Date(),
+            turnExpiresAt: null,
+          }
+        : {
+            currentRound: nextTurn.nextRound,
+            currentPickIndex: nextTurn.nextPickIndex,
+            turnExpiresAt: nextTurnExpiresAt(league.draftPickTime),
+          },
+    });
 
-    if (isComplete) {
+    if (nextTurn.didComplete) {
       await tx.league.update({
         where: { id: leagueId },
-        data: { status: 'ACTIVE' },
-      })
+        data: {
+          status: 'ACTIVE',
+        },
+      });
     }
 
-    return newPick
-  })
+    return pick;
+  });
 
-  return { success: true, pick: { id: pick.id, round, pickNumber: nextPick, isCaptain } }
-}
-
-/**
- * Start a draft for a league. Randomizes the draft order.
- */
-export async function startDraft(leagueId: string, userId: string): Promise<{ success: boolean; error?: string }> {
-  const league = await prisma.league.findUnique({
-    where: { id: leagueId },
-    include: { members: true },
-  })
-
-  if (!league) return { success: false, error: 'League not found' }
-  if (league.creatorId !== userId) return { success: false, error: 'Only the league creator can start the draft' }
-  if (league.status !== 'SETUP') return { success: false, error: 'League is not in setup phase' }
-  if (league.members.length < 2) return { success: false, error: 'Need at least 2 members' }
-
-  // Randomize draft order
-  const memberIds = league.members.map((m) => m.userId)
-  for (let i = memberIds.length - 1; i > 0; i--) {
-    const j = Math.floor(Math.random() * (i + 1));
-    [memberIds[i], memberIds[j]] = [memberIds[j], memberIds[i]]
+  const updatedDraft = await fetchHydratedDraftState(prisma, leagueId);
+  if (!updatedDraft) {
+    throw new Error('Failed to load updated draft state');
   }
 
-  await prisma.$transaction(async (tx) => {
-    await tx.draftState.create({
-      data: {
-        leagueId,
-        status: 'IN_PROGRESS',
-        currentRound: 1,
-        currentPickIndex: 0,
-        draftOrder: memberIds,
-        startedAt: new Date(),
+  return {
+    draft: buildDraftStateResponse(updatedDraft),
+    pick: toDraftPickEntry(createdPick),
+    skippedUserId: null,
+    didComplete: nextTurn.didComplete,
+  };
+}
+
+async function findQueuedPlayerId(
+  tx: Prisma.TransactionClient,
+  leagueId: string,
+  userId: string,
+  draftedPlayerIds: Set<string>
+): Promise<string | null> {
+  const queueEntries = await tx.draftQueueEntry.findMany({
+    where: {
+      leagueId,
+      userId,
+    },
+    include: {
+      player: {
+        select: playerSummarySelect,
       },
-    })
+    },
+    orderBy: {
+      priority: 'asc',
+    },
+  });
 
-    await tx.league.update({
-      where: { id: leagueId },
-      data: { status: 'DRAFTING' },
-    })
-  })
+  for (const entry of queueEntries) {
+    if (!draftedPlayerIds.has(entry.playerId)) {
+      return entry.playerId;
+    }
+  }
 
-  return { success: true }
+  return null;
+}
+
+export async function skipCurrentDraftTurn(leagueId: string): Promise<DraftMutationResult> {
+  const draftState = await fetchHydratedDraftState(prisma, leagueId);
+  if (!draftState || draftState.status !== 'IN_PROGRESS') {
+    throw new Error('Draft is not currently active');
+  }
+
+  const league = await prisma.league.findUnique({
+    where: { id: leagueId },
+  });
+
+  if (!league) {
+    throw new Error('League not found');
+  }
+
+  const skippedUserId = getCurrentPickerUserId(
+    draftState.draftOrder as string[],
+    draftState.currentRound,
+    draftState.currentPickIndex
+  );
+  const draftOrder = draftState.draftOrder as string[];
+  const nextTurn = getNextTurn(
+    draftState.currentRound,
+    draftState.currentPickIndex,
+    draftOrder.length,
+    league.rosterSize
+  );
+
+  await prisma.$transaction(async (tx) => {
+    await tx.draftState.update({
+      where: { id: draftState.id },
+      data: nextTurn.didComplete
+        ? {
+            status: 'COMPLETE',
+            completedAt: new Date(),
+            turnExpiresAt: null,
+          }
+        : {
+            currentRound: nextTurn.nextRound,
+            currentPickIndex: nextTurn.nextPickIndex,
+            turnExpiresAt: nextTurnExpiresAt(league.draftPickTime),
+          },
+    });
+
+    if (nextTurn.didComplete) {
+      await tx.league.update({
+        where: { id: leagueId },
+        data: {
+          status: 'ACTIVE',
+        },
+      });
+    }
+  });
+
+  const updatedDraft = await fetchHydratedDraftState(prisma, leagueId);
+  if (!updatedDraft) {
+    throw new Error('Failed to load updated draft state');
+  }
+
+  return {
+    draft: buildDraftStateResponse(updatedDraft),
+    pick: null,
+    skippedUserId,
+    didComplete: nextTurn.didComplete,
+  };
+}
+
+export async function autoResolveDraftTurn(leagueId: string): Promise<DraftMutationResult> {
+  const draftState = await fetchHydratedDraftState(prisma, leagueId);
+  if (!draftState || draftState.status !== 'IN_PROGRESS') {
+    throw new Error('Draft is not currently active');
+  }
+
+  const currentPickerUserId = getCurrentPickerUserId(
+    draftState.draftOrder as string[],
+    draftState.currentRound,
+    draftState.currentPickIndex
+  );
+  const draftedPlayerIds = new Set(draftState.picks.map((pick) => pick.playerId));
+  const queuedPlayerId = await prisma.$transaction((tx) =>
+    findQueuedPlayerId(tx, leagueId, currentPickerUserId, draftedPlayerIds)
+  );
+
+  if (queuedPlayerId) {
+    return makeDraftPick(leagueId, currentPickerUserId, queuedPlayerId);
+  }
+
+  return skipCurrentDraftTurn(leagueId);
 }

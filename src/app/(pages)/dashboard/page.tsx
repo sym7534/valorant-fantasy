@@ -1,29 +1,63 @@
 'use client';
 
-import React from 'react';
+import React, { useEffect, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { useAuth } from '@/src/hooks/useAuth';
+import type { LeagueListResponse } from '@/src/lib/api-types';
 import LeagueCard from '@/src/components/league/LeagueCard';
 import Button from '@/src/components/ui/Button';
-import EmptyState from '@/src/components/ui/EmptyState';
 import ActivityFeed from '@/src/components/league/ActivityFeed';
 import Spinner from '@/src/components/ui/Spinner';
-import { MOCK_LEAGUES, MOCK_USER } from '@/src/lib/mock-data';
-
-// TEMPORARY mock activities
-const MOCK_ACTIVITIES = [
-  { id: '1', type: 'draft_pick' as const, message: 'AcePlayer drafted TenZ (Sentinels) in Round 1', timestamp: '2026-03-16T22:00:00Z' },
-  { id: '2', type: 'star_player' as const, message: 'PhoenixRush activated Shao as Star Player', timestamp: '2026-03-16T18:00:00Z' },
-  { id: '3', type: 'lineup_change' as const, message: 'JettSetGo swapped Derke into active lineup', timestamp: '2026-03-16T12:00:00Z' },
-  { id: '4', type: 'join' as const, message: 'OmenShadow joined Iron Lobby', timestamp: '2026-03-15T09:00:00Z' },
-  { id: '5', type: 'score' as const, message: 'Week 2 scores are in! AcePlayer scored 768.8 pts', timestamp: '2026-03-14T20:00:00Z' },
-];
+import Card from '@/src/components/ui/Card';
 
 export default function DashboardPage(): React.ReactElement {
   const { user, isLoading } = useAuth();
   const router = useRouter();
+  const [data, setData] = useState<LeagueListResponse | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
 
-  if (isLoading) {
+  useEffect(() => {
+    if (isLoading) {
+      return;
+    }
+
+    let cancelled = false;
+
+    async function loadDashboard(): Promise<void> {
+      setLoading(true);
+      setError(null);
+
+      try {
+        const response = await fetch('/api/leagues', { cache: 'no-store' });
+        const payload = (await response.json()) as LeagueListResponse & { error?: string };
+
+        if (!response.ok || payload.error) {
+          throw new Error(payload.error ?? 'Failed to load dashboard');
+        }
+
+        if (!cancelled) {
+          setData(payload);
+        }
+      } catch (error) {
+        if (!cancelled) {
+          setError(error instanceof Error ? error.message : 'Failed to load dashboard');
+        }
+      } finally {
+        if (!cancelled) {
+          setLoading(false);
+        }
+      }
+    }
+
+    void loadDashboard();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [isLoading]);
+
+  if (isLoading || loading) {
     return (
       <div className="flex items-center justify-center min-h-[60vh]">
         <Spinner />
@@ -33,64 +67,72 @@ export default function DashboardPage(): React.ReactElement {
 
   return (
     <div className="max-w-[1400px] mx-auto px-6 py-8">
-      {/* Welcome header */}
-      <div className="mb-8">
-        <h1 className="text-3xl font-bold font-[family-name:var(--font-display)] uppercase tracking-wider text-[var(--text-primary)]">
-          Welcome back, <span className="text-[var(--accent-red)]">{user?.name ?? 'Player'}</span>
-        </h1>
-        <p className="text-sm text-[var(--text-secondary)] mt-1">
-          Manage your leagues and track your fantasy teams
-        </p>
+      <div className="mb-8 flex items-end justify-between gap-6">
+        <div>
+          <h1 className="text-3xl font-bold font-[family-name:var(--font-display)] uppercase tracking-wider text-[var(--text-primary)]">
+            Welcome back, <span className="text-[var(--accent-red)]">{user?.name ?? 'Manager'}</span>
+          </h1>
+          <p className="text-sm text-[var(--text-secondary)] mt-1">
+            Create a private league, jump into a live snake draft, and manage your weekly VCT lineup.
+          </p>
+        </div>
+
+        <div className="flex items-center gap-3">
+          <Button variant="primary" size="md" onClick={() => router.push('/league/create')}>
+            Create League
+          </Button>
+          <Button variant="secondary" size="md" onClick={() => router.push('/league/join')}>
+            Join League
+          </Button>
+        </div>
       </div>
 
-      {/* Quick actions */}
-      <div className="flex items-center gap-3 mb-8">
-        <Button variant="primary" size="md" onClick={() => router.push('/league/create')}>
-          Create League
-        </Button>
-        <Button variant="secondary" size="md" onClick={() => router.push('/league/create')}>
-          Join League
-        </Button>
-      </div>
+      {error && (
+        <Card className="mb-6 p-4 border-[var(--status-error)]">
+          <p className="text-sm text-[var(--status-error)]">{error}</p>
+        </Card>
+      )}
 
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-        {/* League cards */}
-        <div className="lg:col-span-2">
+      <div className="grid grid-cols-1 lg:grid-cols-[1.8fr_1fr] gap-6">
+        <section>
           <h2 className="text-sm font-bold font-[family-name:var(--font-display)] uppercase tracking-wider text-[var(--text-secondary)] mb-4">
             Your Leagues
           </h2>
 
-          {MOCK_LEAGUES.length > 0 ? (
+          {data?.leagues.length ? (
             <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-              {MOCK_LEAGUES.map((league, i) => (
-                <div key={league.id} className="animate-fade-in-up" style={{ animationDelay: `${i * 75}ms` }}>
+              {data.leagues.map((league, index) => (
+                <div key={league.id} className="animate-fade-in-up" style={{ animationDelay: `${index * 75}ms` }}>
                   <LeagueCard
                     league={league}
-                    userRank={league.status === 'ACTIVE' ? i + 1 : undefined}
                     onClick={() => router.push(`/league/${league.id}`)}
                   />
                 </div>
               ))}
             </div>
           ) : (
-            <EmptyState
-              icon={
-                <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
-                  <path d="M17 20h5v-2a3 3 0 00-5.356-1.857M17 20H7m10 0v-2c0-.656-.126-1.283-.356-1.857M7 20H2v-2a3 3 0 015.356-1.857M7 20v-2c0-.656.126-1.283.356-1.857m0 0a5.002 5.002 0 019.288 0M15 7a3 3 0 11-6 0 3 3 0 016 0z" />
-                </svg>
-              }
-              title="No Leagues Yet"
-              description="Create your own league or join one with an invite code to start building your dream VCT roster."
-              actionLabel="Create a League"
-              onAction={() => router.push('/league/create')}
-            />
+            <Card className="p-8 text-center">
+              <h3 className="text-xl font-bold font-[family-name:var(--font-display)] uppercase tracking-wider text-[var(--text-primary)] mb-3">
+                No leagues yet
+              </h3>
+              <p className="text-sm text-[var(--text-secondary)] mb-6">
+                Start a private lobby for your group or join an existing one with an invite code.
+              </p>
+              <div className="flex items-center justify-center gap-3">
+                <Button variant="primary" onClick={() => router.push('/league/create')}>
+                  Create League
+                </Button>
+                <Button variant="secondary" onClick={() => router.push('/league/join')}>
+                  Join League
+                </Button>
+              </div>
+            </Card>
           )}
-        </div>
+        </section>
 
-        {/* Activity feed */}
-        <div>
-          <ActivityFeed activities={MOCK_ACTIVITIES} />
-        </div>
+        <section>
+          <ActivityFeed activities={data?.activity ?? []} />
+        </section>
       </div>
     </div>
   );

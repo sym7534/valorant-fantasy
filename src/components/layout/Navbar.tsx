@@ -4,6 +4,9 @@ import React from 'react';
 import Image from 'next/image';
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
+import { signOut } from 'next-auth/react';
+import Avatar from '@/src/components/ui/Avatar';
+import Button from '@/src/components/ui/Button';
 
 interface NavbarProps {
   userName?: string;
@@ -19,6 +22,7 @@ const navLinks = [
 
 export default function Navbar({
   userName,
+  userImage,
   className = '',
 }: NavbarProps): React.ReactElement {
   const pathname = usePathname();
@@ -26,7 +30,6 @@ export default function Navbar({
   return (
     <nav className={`sticky top-0 z-40 bg-[var(--bg-primary)]/95 backdrop-blur-sm border-b border-[var(--border-subtle)] ${className}`}>
       <div className="max-w-[1400px] mx-auto px-6 h-16 flex items-center justify-between">
-        {/* Logo */}
         <Link href="/dashboard" className="flex items-center gap-3 group">
           <Image
             src="/vctlogo.png"
@@ -40,10 +43,10 @@ export default function Navbar({
           </span>
         </Link>
 
-        {/* Nav links */}
         <div className="flex items-center gap-1">
           {navLinks.map((link) => {
             const isActive = pathname === link.href;
+
             return (
               <Link
                 key={link.href}
@@ -63,16 +66,18 @@ export default function Navbar({
           })}
         </div>
 
-        {/* User */}
         <div className="flex items-center gap-3">
           {userName ? (
-            <div className="flex items-center gap-2">
-              <div className="w-8 h-8 rounded-full bg-[var(--bg-tertiary)] flex items-center justify-center">
-                <span className="text-xs font-bold font-[family-name:var(--font-display)] text-[var(--text-secondary)]">
-                  {userName.charAt(0).toUpperCase()}
-                </span>
-              </div>
+            <div className="flex items-center gap-3">
+              <Avatar name={userName} src={userImage} size="sm" />
               <span className="text-sm text-[var(--text-primary)] font-medium">{userName}</span>
+              <Button
+                variant="ghost"
+                size="sm"
+                onClick={() => void signOut({ callbackUrl: '/' })}
+              >
+                Sign Out
+              </Button>
             </div>
           ) : (
             <Link

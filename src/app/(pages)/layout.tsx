@@ -15,7 +15,7 @@ export default function PagesLayout({
 
   return (
     <div className="min-h-screen flex flex-col">
-      <Navbar userName={user?.name} userImage={user?.image} />
+      <Navbar userName={user?.name ?? undefined} userImage={user?.image ?? undefined} />
       <main className="flex-1">
         {children}
       </main>

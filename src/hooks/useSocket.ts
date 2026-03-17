@@ -1,46 +1,74 @@
 'use client';
 
-import { useEffect, useRef, useState, useCallback } from 'react';
-// BLOCKED: Waiting on Backend Agent for server.ts and socket.io setup
-// TEMPORARY — this hook will connect to Socket.io once the backend is ready
+import { useCallback, useEffect, useState } from 'react';
+import { io, type Socket } from 'socket.io-client';
 
 type SocketEventHandler = (...args: unknown[]) => void;
 
 interface UseSocketReturn {
   isConnected: boolean;
-  emit: (event: string, data: unknown) => void;
+  emit: (event: string, data?: unknown) => void;
   on: (event: string, handler: SocketEventHandler) => void;
   off: (event: string, handler: SocketEventHandler) => void;
 }
 
-export function useSocket(_namespace?: string): UseSocketReturn {
-  const [isConnected, setIsConnected] = useState(false);
-  const handlersRef = useRef<Map<string, Set<SocketEventHandler>>>(new Map());
+let socketInstance: Socket | null = null;
+
+function getSocket(): Socket {
+  if (!socketInstance) {
+    socketInstance = io({
+      path: '/socket.io',
+      transports: ['websocket', 'polling'],
+      autoConnect: true,
+    });
+  }
+
+  return socketInstance;
+}
+
+export function useSocket(): UseSocketReturn {
+  const [isConnected, setIsConnected] = useState<boolean>(() => getSocket().connected);
 
   useEffect(() => {
-    // TEMPORARY: Simulate connection
-    const timer = setTimeout(() => setIsConnected(true), 500);
-    return () => {
-      clearTimeout(timer);
+    const socket = getSocket();
+
+    const handleConnect = (): void => {
+      setIsConnected(true);
+    };
+
+    const handleDisconnect = (): void => {
       setIsConnected(false);
+    };
+
+    socket.on('connect', handleConnect);
+    socket.on('disconnect', handleDisconnect);
+
+    if (!socket.connected) {
+      socket.connect();
+    }
+
+    return () => {
+      socket.off('connect', handleConnect);
+      socket.off('disconnect', handleDisconnect);
     };
   }, []);
 
-  const emit = useCallback((_event: string, _data: unknown): void => {
-    // BLOCKED: Will use socket.emit() when socket.io-client is wired
-    console.log('[Socket Mock] emit:', _event, _data);
+  const emit = useCallback((event: string, data?: unknown): void => {
+    getSocket().emit(event, data);
   }, []);
 
   const on = useCallback((event: string, handler: SocketEventHandler): void => {
-    if (!handlersRef.current.has(event)) {
-      handlersRef.current.set(event, new Set());
-    }
-    handlersRef.current.get(event)!.add(handler);
+    getSocket().on(event, handler);
   }, []);
 
   const off = useCallback((event: string, handler: SocketEventHandler): void => {
-    handlersRef.current.get(event)?.delete(handler);
+    getSocket().off(event, handler);
   }, []);
 
-  return { isConnected, emit, on, off };
+  return {
+    isConnected,
+    emit,
+    on,
+    off,
+  };
 }

@@ -1,4 +1,5 @@
 import React from 'react';
+import Image from 'next/image';
 
 type AvatarSize = 'sm' | 'md' | 'lg';
 
@@ -9,10 +10,10 @@ interface AvatarProps {
   className?: string;
 }
 
-const sizeStyles: Record<AvatarSize, { container: string; text: string }> = {
-  sm: { container: 'w-8 h-8', text: 'text-xs' },
-  md: { container: 'w-10 h-10', text: 'text-sm' },
-  lg: { container: 'w-14 h-14', text: 'text-lg' },
+const sizeStyles: Record<AvatarSize, { container: string; text: string; imageSize: string }> = {
+  sm: { container: 'w-8 h-8', text: 'text-xs', imageSize: '32px' },
+  md: { container: 'w-10 h-10', text: 'text-sm', imageSize: '40px' },
+  lg: { container: 'w-14 h-14', text: 'text-lg', imageSize: '56px' },
 };
 
 function getInitials(name: string): string {
@@ -33,11 +34,17 @@ export default function Avatar({
 
   if (src) {
     return (
-      <img
-        src={src}
-        alt={name}
-        className={`${styles.container} rounded-full object-cover border border-[var(--border-default)] ${className}`}
-      />
+      <div
+        className={`${styles.container} relative overflow-hidden rounded-full border border-[var(--border-default)] ${className}`}
+      >
+        <Image
+          src={src}
+          alt={name}
+          fill
+          sizes={styles.imageSize}
+          className="object-cover"
+        />
+      </div>
     );
   }
 

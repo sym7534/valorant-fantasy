@@ -1,31 +1,91 @@
-import { prisma } from '@/src/lib/prisma'
+import { Prisma } from '@prisma/client';
+import { prisma } from '@/src/lib/prisma';
 import {
-  calculateBaseScore,
-  applyMultiplier,
+  ACTIVE_LINEUP_SIZE,
   CAPTAIN_MULTIPLIER,
   STAR_PLAYER_MULTIPLIER,
-} from '@/src/lib/game-config'
-import type { PlayerDesignation, PlayerMatchStats } from '@/src/lib/game-config'
+  applyMultiplier,
+  calculateBaseScore,
+} from '@/src/lib/game-config';
+import type { PlayerDesignation, PlayerMatchStats } from '@/src/lib/game-config';
+import type { PlayerScoreBreakdown } from '@/src/lib/api-types';
 
-interface PlayerScoreDetail {
-  playerId: string
-  playerName: string
-  baseScore: number
-  multiplier: number
-  finalScore: number
-  designation: PlayerDesignation
-  stats: PlayerMatchStats
+type MatchStatRecord = {
+  kills: number;
+  deaths: number;
+  assists: number;
+  firstKills: number;
+  firstDeaths: number;
+  roundsWon: number;
+  roundsLost: number;
+  adr: number;
+};
+
+export type LeagueWeekScoreResult = {
+  leagueMemberId: string;
+  totalPoints: number;
+  breakdown: PlayerScoreBreakdown[];
+};
+
+function aggregateMatchStats(matchStats: MatchStatRecord[]): PlayerMatchStats {
+  const aggregate = matchStats.reduce<PlayerMatchStats>(
+    (current, stats) => ({
+      kills: current.kills + stats.kills,
+      deaths: current.deaths + stats.deaths,
+      assists: current.assists + stats.assists,
+      firstKills: current.firstKills + stats.firstKills,
+      firstDeaths: current.firstDeaths + stats.firstDeaths,
+      roundsWon: current.roundsWon + stats.roundsWon,
+      roundsLost: current.roundsLost + stats.roundsLost,
+      adr: current.adr + stats.adr,
+    }),
+    {
+      kills: 0,
+      deaths: 0,
+      assists: 0,
+      firstKills: 0,
+      firstDeaths: 0,
+      roundsWon: 0,
+      roundsLost: 0,
+      adr: 0,
+    }
+  );
+
+  if (matchStats.length > 0) {
+    aggregate.adr = aggregate.adr / matchStats.length;
+  }
+
+  return aggregate;
 }
 
-/**
- * Calculate weekly scores for all rosters in a league for a given week.
- * Looks at each roster's weekly lineup, computes fantasy points from match stats,
- * applies captain (2x) and star (3x) multipliers.
- */
-export async function calculateWeeklyScores(
+function toBreakdownEntry(
+  playerId: string,
+  playerName: string,
+  stats: PlayerMatchStats,
+  designation: PlayerDesignation
+): PlayerScoreBreakdown {
+  const baseScore = Number(calculateBaseScore(stats).toFixed(1));
+  const finalScore = Number(applyMultiplier(baseScore, designation).toFixed(1));
+
+  return {
+    playerId,
+    playerName,
+    baseScore,
+    multiplier:
+      designation === 'star'
+        ? STAR_PLAYER_MULTIPLIER
+        : designation === 'captain'
+          ? CAPTAIN_MULTIPLIER
+          : 1,
+    finalScore,
+    designation,
+  };
+}
+
+export async function calculateLeagueWeekScores(
   leagueId: string,
   weekNumber: number
-): Promise<{ memberId: string; totalPoints: number; breakdown: PlayerScoreDetail[] }[]> {
+): Promise<LeagueWeekScoreResult[]> {
   const rosters = await prisma.roster.findMany({
     where: { leagueId },
     include: {
@@ -36,153 +96,122 @@ export async function calculateWeeklyScores(
           slots: {
             include: {
               rosterPlayer: {
-                include: { player: { include: { matchStats: true } } },
+                include: {
+                  player: {
+                    include: {
+                      matchStats: {
+                        where: { weekNumber },
+                        select: {
+                          kills: true,
+                          deaths: true,
+                          assists: true,
+                          firstKills: true,
+                          firstDeaths: true,
+                          roundsWon: true,
+                          roundsLost: true,
+                          adr: true,
+                        },
+                      },
+                    },
+                  },
+                },
               },
             },
           },
         },
       },
     },
-  })
+  });
 
-  const results: { memberId: string; totalPoints: number; breakdown: PlayerScoreDetail[] }[] = []
-
-  for (const roster of rosters) {
-    const lineup = roster.weeklyLineups[0]
-    if (!lineup) {
-      results.push({ memberId: roster.leagueMemberId, totalPoints: 0, breakdown: [] })
-      continue
+  return rosters.map((roster) => {
+    const lineup = roster.weeklyLineups[0];
+    if (!lineup || lineup.slots.length !== ACTIVE_LINEUP_SIZE) {
+      return {
+        leagueMemberId: roster.leagueMemberId,
+        totalPoints: 0,
+        breakdown: [],
+      };
     }
 
-    const breakdown: PlayerScoreDetail[] = []
+    const breakdown = lineup.slots.map((slot) => {
+      const matchStats = aggregateMatchStats(slot.rosterPlayer.player.matchStats);
+      const designation: PlayerDesignation = slot.isStarPlayer
+        ? 'star'
+        : slot.rosterPlayer.isCaptain
+          ? 'captain'
+          : 'normal';
 
-    for (const slot of lineup.slots) {
-      const rp = slot.rosterPlayer
-      const player = rp.player
-      const matchStats = player.matchStats
+      return toBreakdownEntry(
+        slot.rosterPlayer.playerId,
+        slot.rosterPlayer.player.name,
+        matchStats,
+        designation
+      );
+    });
 
-      // Sum all match stats for this week's period
-      // For MVP, use all stats; in production, filter by date range for the week
-      const aggregated: PlayerMatchStats = matchStats.reduce(
-        (acc, s) => ({
-          kills: acc.kills + s.kills,
-          deaths: acc.deaths + s.deaths,
-          assists: acc.assists + s.assists,
-          firstKills: acc.firstKills + s.firstKills,
-          firstDeaths: acc.firstDeaths + s.firstDeaths,
-          roundsWon: acc.roundsWon + s.roundsWon,
-          roundsLost: acc.roundsLost + s.roundsLost,
-          adr: acc.adr + s.adr,
-        }),
-        { kills: 0, deaths: 0, assists: 0, firstKills: 0, firstDeaths: 0, roundsWon: 0, roundsLost: 0, adr: 0 }
-      )
+    const totalPoints = Number(
+      breakdown.reduce((sum, entry) => sum + entry.finalScore, 0).toFixed(1)
+    );
 
-      if (matchStats.length > 0) {
-        aggregated.adr = aggregated.adr / matchStats.length
-      }
-
-      const baseScore = calculateBaseScore(aggregated)
-
-      let designation: PlayerDesignation = 'normal'
-      if (slot.isStarPlayer) {
-        designation = 'star'
-      } else if (rp.isCaptain) {
-        designation = 'captain'
-      }
-
-      const finalScore = applyMultiplier(baseScore, designation)
-
-      breakdown.push({
-        playerId: player.id,
-        playerName: player.name,
-        baseScore: +baseScore.toFixed(1),
-        multiplier: designation === 'star' ? STAR_PLAYER_MULTIPLIER : designation === 'captain' ? CAPTAIN_MULTIPLIER : 1,
-        finalScore: +finalScore.toFixed(1),
-        designation,
-        stats: aggregated,
-      })
-    }
-
-    const totalPoints = breakdown.reduce((sum, p) => sum + p.finalScore, 0)
-
-    results.push({
-      memberId: roster.leagueMemberId,
-      totalPoints: +totalPoints.toFixed(1),
+    return {
+      leagueMemberId: roster.leagueMemberId,
+      totalPoints,
       breakdown,
-    })
-  }
-
-  return results
+    };
+  });
 }
 
-/**
- * Persist weekly scores to the database.
- */
-export async function saveWeeklyScores(leagueId: string, weekNumber: number): Promise<void> {
-  const scores = await calculateWeeklyScores(leagueId, weekNumber)
+export async function saveLeagueWeekScores(
+  leagueId: string,
+  weekNumber: number
+): Promise<LeagueWeekScoreResult[]> {
+  const results = await calculateLeagueWeekScores(leagueId, weekNumber);
 
   await prisma.$transaction(
-    scores.map((s) =>
+    results.map((result) =>
       prisma.weeklyScore.upsert({
         where: {
           leagueMemberId_weekNumber: {
-            leagueMemberId: s.memberId,
+            leagueMemberId: result.leagueMemberId,
             weekNumber,
           },
         },
         create: {
-          leagueMemberId: s.memberId,
+          leagueMemberId: result.leagueMemberId,
           weekNumber,
-          totalPoints: s.totalPoints,
-          breakdown: s.breakdown as unknown as Record<string, unknown>,
+          totalPoints: result.totalPoints,
+          breakdown: result.breakdown as unknown as Prisma.InputJsonValue,
         },
         update: {
-          totalPoints: s.totalPoints,
-          breakdown: s.breakdown as unknown as Record<string, unknown>,
+          totalPoints: result.totalPoints,
+          breakdown: result.breakdown as unknown as Prisma.InputJsonValue,
         },
       })
     )
-  )
+  );
+
+  return results;
 }
 
-/**
- * Get standings for a league — aggregates total scores across all weeks.
- */
-export async function getStandings(leagueId: string): Promise<{
-  rank: number
-  memberId: string
-  userId: string
-  userName: string | null
-  userImage: string | null
-  totalPoints: number
-  weeklyScores: { weekNumber: number; points: number }[]
-}[]> {
-  const members = await prisma.leagueMember.findMany({
-    where: { leagueId },
+export async function syncLeagueScores(leagueId: string): Promise<void> {
+  const league = await prisma.league.findUnique({
+    where: { id: leagueId },
     include: {
-      user: { select: { id: true, name: true, image: true } },
-      weeklyScores: { orderBy: { weekNumber: 'asc' } },
+      weeks: {
+        orderBy: { weekNumber: 'asc' },
+      },
     },
-  })
+  });
 
-  const standings = members.map((m) => {
-    const totalPoints = m.weeklyScores.reduce((sum, ws) => sum + ws.totalPoints, 0)
-    return {
-      rank: 0,
-      memberId: m.id,
-      userId: m.userId,
-      userName: m.user.name,
-      userImage: m.user.image,
-      totalPoints: +totalPoints.toFixed(1),
-      weeklyScores: m.weeklyScores.map((ws) => ({
-        weekNumber: ws.weekNumber,
-        points: ws.totalPoints,
-      })),
+  if (!league) {
+    return;
+  }
+
+  for (const week of league.weeks) {
+    if (week.weekNumber > league.currentWeek) {
+      continue;
     }
-  })
 
-  standings.sort((a, b) => b.totalPoints - a.totalPoints)
-  standings.forEach((s, i) => { s.rank = i + 1 })
-
-  return standings
+    await saveLeagueWeekScores(leagueId, week.weekNumber);
+  }
 }

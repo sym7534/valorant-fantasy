@@ -1,25 +1,26 @@
-import { NextRequest, NextResponse } from 'next/server'
-import { auth } from '@/src/lib/auth'
-import { prisma } from '@/src/lib/prisma'
-import { ACTIVE_LINEUP_SIZE } from '@/src/lib/game-config'
-import type { RosterLineupRequest, RosterLineupResponse, LineupSlotEntry } from '@/src/lib/api-types'
+import { NextRequest, NextResponse } from 'next/server';
+import { auth } from '@/src/lib/auth';
+import { prisma } from '@/src/lib/prisma';
+import { ACTIVE_LINEUP_SIZE } from '@/src/lib/game-config';
+import type { RosterLineupRequest, RosterLineupResponse } from '@/src/lib/api-types';
+import { buildRosterResponse, ensureLeagueWeek } from '@/src/server/roster-service';
+import { saveLeagueWeekScores } from '@/src/server/scoring-engine';
 
-// PUT /api/leagues/[leagueId]/roster/lineup — set active lineup
 export async function PUT(
   request: NextRequest,
   { params }: { params: Promise<{ leagueId: string }> }
 ): Promise<NextResponse<RosterLineupResponse | { error: string }>> {
-  const session = await auth()
-  if (!session?.user?.id) {
-    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+  const session = await auth();
+  const userId = session?.user?.id;
+
+  if (!userId) {
+    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
   }
 
-  const { leagueId } = await params
-
   try {
-    const body = (await request.json()) as Partial<RosterLineupRequest>
+    const { leagueId } = await params;
+    const body = (await request.json()) as Partial<RosterLineupRequest>;
 
-    // Validate playerIds
     if (
       !body.playerIds ||
       !Array.isArray(body.playerIds) ||
@@ -28,122 +29,148 @@ export async function PUT(
       return NextResponse.json(
         { error: `Lineup must contain exactly ${ACTIVE_LINEUP_SIZE} players` },
         { status: 400 }
-      )
+      );
     }
 
-    // Check all are strings
-    if (!body.playerIds.every((id) => typeof id === 'string')) {
-      return NextResponse.json({ error: 'All playerIds must be strings' }, { status: 400 })
+    const playerIds = body.playerIds.filter(
+      (playerId, index, values): playerId is string =>
+        typeof playerId === 'string' && values.indexOf(playerId) === index
+    );
+
+    if (playerIds.length !== ACTIVE_LINEUP_SIZE) {
+      return NextResponse.json({ error: 'Lineup cannot include duplicate players' }, { status: 400 });
     }
 
-    // Check for duplicates
-    const uniqueIds = new Set(body.playerIds)
-    if (uniqueIds.size !== body.playerIds.length) {
-      return NextResponse.json({ error: 'Duplicate playerIds are not allowed' }, { status: 400 })
-    }
-
-    // Check membership
     const membership = await prisma.leagueMember.findUnique({
       where: {
         leagueId_userId: {
           leagueId,
-          userId: session.user.id,
+          userId,
         },
       },
-    })
+    });
 
     if (!membership) {
-      return NextResponse.json({ error: 'Not a member of this league' }, { status: 403 })
+      return NextResponse.json({ error: 'Not a member of this league' }, { status: 403 });
     }
 
-    // Check league is ACTIVE
-    const league = await prisma.league.findUnique({ where: { id: leagueId } })
-    if (!league || league.status !== 'ACTIVE') {
-      return NextResponse.json({ error: 'League is not in active state' }, { status: 400 })
+    const league = await prisma.league.findUnique({
+      where: { id: leagueId },
+    });
+
+    if (!league) {
+      return NextResponse.json({ error: 'League not found' }, { status: 404 });
     }
 
-    // Get roster
-    const roster = await prisma.roster.findUnique({
-      where: { leagueMemberId: membership.id },
-      include: {
-        players: true,
-      },
-    })
+    if (league.status !== 'ACTIVE') {
+      return NextResponse.json({ error: 'Lineups can only be set once the draft is complete' }, { status: 400 });
+    }
+
+    const weekNumber = body.weekNumber ?? league.currentWeek;
+    if (!Number.isInteger(weekNumber) || weekNumber < 1) {
+      return NextResponse.json({ error: 'weekNumber must be a positive integer' }, { status: 400 });
+    }
+
+    await ensureLeagueWeek(leagueId, weekNumber);
+
+    const [leagueWeek, roster] = await Promise.all([
+      prisma.leagueWeek.findUniqueOrThrow({
+        where: {
+          leagueId_weekNumber: {
+            leagueId,
+            weekNumber,
+          },
+        },
+      }),
+      prisma.roster.findUnique({
+        where: {
+          leagueMemberId: membership.id,
+        },
+        include: {
+          rosterPlayers: true,
+        },
+      }),
+    ]);
 
     if (!roster) {
-      return NextResponse.json({ error: 'Roster not found' }, { status: 404 })
+      return NextResponse.json({ error: 'Roster not found' }, { status: 404 });
     }
 
-    // Verify all player IDs belong to this roster
-    const rosterPlayerIds = new Set(roster.players.map((rp) => rp.playerId))
-    for (const pid of body.playerIds) {
-      if (!rosterPlayerIds.has(pid)) {
+    if (leagueWeek.isLineupLocked) {
+      return NextResponse.json({ error: 'This week is locked' }, { status: 400 });
+    }
+
+    const rosterPlayerByPlayerId = new Map(
+      roster.rosterPlayers.map((rosterPlayer) => [rosterPlayer.playerId, rosterPlayer])
+    );
+
+    for (const playerId of playerIds) {
+      if (!rosterPlayerByPlayerId.has(playerId)) {
         return NextResponse.json(
-          { error: `Player ${pid} is not on your roster` },
+          { error: `Player ${playerId} is not on your roster` },
           { status: 400 }
-        )
+        );
       }
     }
 
-    // Captain must be in active lineup
-    const captainRosterPlayer = roster.players.find((rp) => rp.isCaptain)
-    if (captainRosterPlayer && !body.playerIds.includes(captainRosterPlayer.playerId)) {
+    const captain = roster.rosterPlayers.find((rosterPlayer) => rosterPlayer.isCaptain);
+    if (captain && !playerIds.includes(captain.playerId)) {
       return NextResponse.json(
-        { error: 'Captain must be in the active lineup' },
+        { error: 'Your captain must remain in the active lineup' },
         { status: 400 }
-      )
+      );
     }
 
-    const weekNumber = body.weekNumber ?? 1
-
-    // Create or update lineup in transaction
     const lineup = await prisma.$transaction(async (tx) => {
-      // Check if lineup exists for this week
-      let weeklyLineup = await tx.weeklyLineup.findUnique({
+      const existingLineup = await tx.weeklyLineup.findUnique({
         where: {
           rosterId_weekNumber: {
             rosterId: roster.id,
             weekNumber,
           },
         },
-      })
+        include: {
+          slots: true,
+        },
+      });
+      const existingStarRosterPlayerId =
+        existingLineup?.slots.find((slot) => slot.isStarPlayer)?.rosterPlayerId ?? null;
 
-      if (weeklyLineup?.isLocked) {
-        throw new Error('Lineup is locked for this week')
-      }
+      const weeklyLineup = existingLineup
+        ? await tx.weeklyLineup.update({
+            where: { id: existingLineup.id },
+            data: {
+              isLocked: false,
+            },
+          })
+        : await tx.weeklyLineup.create({
+            data: {
+              rosterId: roster.id,
+              weekNumber,
+              isLocked: false,
+            },
+          });
 
-      if (weeklyLineup) {
-        // Delete existing slots
-        await tx.lineupSlot.deleteMany({
-          where: { weeklyLineupId: weeklyLineup.id },
-        })
-      } else {
-        weeklyLineup = await tx.weeklyLineup.create({
-          data: {
-            rosterId: roster.id,
-            weekNumber,
-            isLocked: false,
-          },
-        })
-      }
+      await tx.lineupSlot.deleteMany({
+        where: {
+          weeklyLineupId: weeklyLineup.id,
+        },
+      });
 
-      // Build roster player lookup by playerId
-      const rosterPlayerMap = new Map(
-        roster.players.map((rp) => [rp.playerId, rp])
-      )
-
-      // Create new lineup slots
-      for (const playerId of body.playerIds!) {
-        const rosterPlayer = rosterPlayerMap.get(playerId)
-        if (!rosterPlayer) continue
+      for (const playerId of playerIds) {
+        const rosterPlayer = rosterPlayerByPlayerId.get(playerId);
+        if (!rosterPlayer) {
+          continue;
+        }
 
         await tx.lineupSlot.create({
           data: {
             weeklyLineupId: weeklyLineup.id,
             rosterPlayerId: rosterPlayer.id,
-            isStarPlayer: false,
+            isStarPlayer:
+              existingStarRosterPlayerId === rosterPlayer.id && !rosterPlayer.isCaptain,
           },
-        })
+        });
       }
 
       return tx.weeklyLineup.findUniqueOrThrow({
@@ -168,39 +195,23 @@ export async function PUT(
             },
           },
         },
-      })
-    })
+      });
+    });
 
-    const slots: LineupSlotEntry[] = lineup.slots.map((s) => ({
-      id: s.id,
-      rosterPlayerId: s.rosterPlayerId,
-      player: {
-        id: s.rosterPlayer.player.id,
-        name: s.rosterPlayer.player.name,
-        team: s.rosterPlayer.player.team,
-        region: s.rosterPlayer.player.region as LineupSlotEntry['player']['region'],
-        role: s.rosterPlayer.player.role as LineupSlotEntry['player']['role'],
-        imageUrl: s.rosterPlayer.player.imageUrl,
-      },
-      isStarPlayer: s.isStarPlayer,
-      isCaptain: s.rosterPlayer.isCaptain,
-    }))
+    await saveLeagueWeekScores(leagueId, weekNumber);
+    const rosterResponse = await buildRosterResponse(leagueId, userId, weekNumber);
 
-    const response: RosterLineupResponse = {
-      lineup: {
+    return NextResponse.json({
+      lineup: rosterResponse.activeLineup ?? {
         id: lineup.id,
         weekNumber: lineup.weekNumber,
         isLocked: lineup.isLocked,
-        slots,
+        slots: [],
       },
-    }
-
-    return NextResponse.json(response)
-  } catch (err) {
-    if (err instanceof Error && err.message === 'Lineup is locked for this week') {
-      return NextResponse.json({ error: err.message }, { status: 400 })
-    }
-    console.error('PUT /api/leagues/[leagueId]/roster/lineup error:', err)
-    return NextResponse.json({ error: 'Internal server error' }, { status: 500 })
+      roster: rosterResponse,
+    });
+  } catch (error) {
+    console.error('PUT /api/leagues/[leagueId]/roster/lineup failed', error);
+    return NextResponse.json({ error: 'Internal server error' }, { status: 500 });
   }
 }

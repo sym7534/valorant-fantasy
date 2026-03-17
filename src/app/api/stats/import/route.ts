@@ -114,6 +114,11 @@ export async function POST(
       return NextResponse.json({ error: 'content is required' }, { status: 400 })
     }
 
+    const weekNumber = body.weekNumber ?? 1
+    if (!Number.isInteger(weekNumber) || weekNumber < 1) {
+      return NextResponse.json({ error: 'weekNumber must be a positive integer' }, { status: 400 })
+    }
+
     let parsedPlayers: ReturnType<typeof parseTsvMatchData>
     try {
       parsedPlayers = parseTsvMatchData(body.content)
@@ -134,7 +139,7 @@ export async function POST(
 
       for (const parsed of parsedPlayers) {
         // Find existing player by name (case-insensitive)
-        let player = await tx.player.findFirst({
+        const player = await tx.player.findFirst({
           where: {
             name: { equals: parsed.name, mode: 'insensitive' },
           },
@@ -157,6 +162,7 @@ export async function POST(
           create: {
             playerId: player.id,
             externalMatchId: body.matchId!,
+            weekNumber,
             kills: parsed.kills,
             deaths: parsed.deaths,
             assists: parsed.assists,
@@ -171,6 +177,7 @@ export async function POST(
             kast: parsed.kast,
           },
           update: {
+            weekNumber,
             kills: parsed.kills,
             deaths: parsed.deaths,
             assists: parsed.assists,
@@ -193,6 +200,7 @@ export async function POST(
     const response: StatsImportResponse = {
       imported: importedPlayers.length,
       matchId: body.matchId,
+      weekNumber,
       players: importedPlayers,
     }
 

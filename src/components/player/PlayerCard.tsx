@@ -4,13 +4,26 @@ import React from 'react';
 import Badge from '@/src/components/ui/Badge';
 import RoleIcon from './RoleIcon';
 import RegionFlag from './RegionFlag';
-// TEMPORARY types
-import type { Player, PlayerDesignation, PlayerMatchStats } from '@/src/lib/mock-data';
+import type {
+  PlayerDesignation,
+  PlayerMatchStats,
+  PlayerRole,
+  Region,
+} from '@/src/lib/game-config';
 
 type CardVariant = 'full' | 'medium' | 'compact';
 
+type PlayerCardPlayer = {
+  id: string;
+  name: string;
+  team: string;
+  region: Region;
+  role: PlayerRole;
+  imageUrl?: string | null;
+};
+
 interface PlayerCardProps {
-  player: Player;
+  player: PlayerCardPlayer;
   variant?: CardVariant;
   designation?: PlayerDesignation;
   stats?: PlayerMatchStats;
@@ -34,6 +47,7 @@ function DesignationBadge({ designation }: { designation: PlayerDesignation }): 
       </Badge>
     );
   }
+
   if (designation === 'star') {
     return (
       <Badge variant="gold" glow>
@@ -44,6 +58,7 @@ function DesignationBadge({ designation }: { designation: PlayerDesignation }): 
       </Badge>
     );
   }
+
   return null;
 }
 
@@ -53,7 +68,7 @@ function FullCard({
   stats,
   fantasyPoints,
 }: {
-  player: Player;
+  player: PlayerCardPlayer;
   designation: PlayerDesignation;
   stats?: PlayerMatchStats;
   fantasyPoints?: number;
@@ -81,23 +96,17 @@ function FullCard({
         ${glowClass}
       `}
     >
-      {/* Player silhouette area */}
       <div className="relative flex-1 bg-gradient-to-b from-[var(--bg-tertiary)] to-[var(--bg-secondary)] flex items-center justify-center overflow-hidden">
-        {/* Geometric pattern behind */}
         <div className="absolute inset-0 bg-grid-pattern opacity-30" />
-        {/* Silhouette placeholder */}
         <div className="w-24 h-32 bg-[var(--bg-accent)] clip-angular opacity-40" />
-        {/* Designation badge */}
         <div className="absolute top-3 right-3">
           <DesignationBadge designation={designation} />
         </div>
-        {/* Region flag */}
         <div className="absolute top-3 left-3">
           <RegionFlag region={player.region} size="sm" />
         </div>
       </div>
 
-      {/* Info section */}
       <div className="p-4 space-y-2">
         <div className="flex items-center gap-2">
           <RoleIcon role={player.role} size="sm" />
@@ -108,7 +117,6 @@ function FullCard({
         </h3>
         <p className="text-xs text-[var(--text-secondary)] truncate">{player.team}</p>
 
-        {/* Stats */}
         {stats && (
           <div className="grid grid-cols-3 gap-1 pt-2 border-t border-[var(--border-subtle)]">
             <div className="text-center">
@@ -132,7 +140,6 @@ function FullCard({
           </div>
         )}
 
-        {/* Fantasy points */}
         {fantasyPoints !== undefined && (
           <div className="flex items-center justify-between pt-1">
             <span className="text-[10px] text-[var(--text-muted)] uppercase">PTS</span>
@@ -154,7 +161,7 @@ function MediumCard({
   onAction,
   isDrafted,
 }: {
-  player: Player;
+  player: PlayerCardPlayer;
   designation: PlayerDesignation;
   fantasyPoints?: number;
   actionLabel?: string;
@@ -170,12 +177,10 @@ function MediumCard({
         ${isDrafted ? 'opacity-40 pointer-events-none' : ''}
       `}
     >
-      {/* Avatar placeholder */}
       <div className="w-12 h-12 bg-[var(--bg-tertiary)] clip-angular-sm flex items-center justify-center shrink-0">
         <RoleIcon role={player.role} size="md" />
       </div>
 
-      {/* Info */}
       <div className="flex-1 min-w-0">
         <div className="flex items-center gap-2">
           <h4 className="font-bold font-[family-name:var(--font-display)] text-sm uppercase tracking-wide text-[var(--text-primary)] truncate">
@@ -189,7 +194,6 @@ function MediumCard({
         </div>
       </div>
 
-      {/* Points / Action */}
       <div className="shrink-0 flex items-center gap-2">
         {fantasyPoints !== undefined && (
           <span className="text-lg font-bold font-[family-name:var(--font-display)] text-[var(--accent-gold)]">
@@ -220,7 +224,7 @@ function CompactCard({
   isDrafted,
   starCooldownWeeksLeft,
 }: {
-  player: Player;
+  player: PlayerCardPlayer;
   designation: PlayerDesignation;
   fantasyPoints?: number;
   actionLabel?: string;

@@ -1,5 +1,6 @@
 import type { Metadata } from 'next';
 import { Rajdhani, DM_Sans } from 'next/font/google';
+import SessionProvider from '@/src/components/layout/SessionProvider';
 import './globals.css';
 
 const displayFont = Rajdhani({
@@ -30,7 +31,7 @@ export default function RootLayout({
   return (
     <html lang="en" className={`${displayFont.variable} ${bodyFont.variable}`}>
       <body className="min-h-screen bg-[var(--bg-primary)] text-[var(--text-primary)] antialiased">
-        {children}
+        <SessionProvider>{children}</SessionProvider>
       </body>
     </html>
   );

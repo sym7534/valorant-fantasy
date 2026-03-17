@@ -1,31 +1,16 @@
-/**
- * @file seed.ts
- * @description Database seed script for VCT Fantasy League.
- *
- * Creates:
- * 1. 240 VCT pro players with realistic names across 4 regions, proper roles, and real team names.
- * 2. Match stats from the existing vlrScraper TSV files (3 match files).
- * 3. Sample test data: 1 league with 4 fake users.
- *
- * Run with: npx prisma db seed
- * (Ensure "prisma.seed" in package.json points to "tsx prisma/seed.ts")
- *
- * Owner: Lead / Game Designer Agent
- */
-
-import { PrismaClient, Region, PlayerRole, LeagueStatus, DraftStatus, SlotType } from '@prisma/client';
-import * as fs from 'fs';
-import * as path from 'path';
+import { PrismaClient, Region, PlayerRole, SlotType } from '@prisma/client';
+import fs from 'node:fs';
+import path from 'node:path';
+import { ROLE_SLOTS_BY_ROSTER_SIZE } from '../src/lib/game-config';
+import { saveLeagueWeekScores } from '../src/server/scoring-engine';
 
 const prisma = new PrismaClient();
+const MATCH_FILE_DIRECTORY = path.resolve(process.cwd(), '..', 'vlrScraper', 'vlrScraper');
+const MATCH_FILES = ['match596400.json', 'match596401.json', 'match596402.json'] as const;
+const ACTIVE_LEAGUE_MEMBER_COUNT = 2;
+const ACTIVE_LEAGUE_ROSTER_SIZE = 7;
+const ACTIVE_LEAGUE_WEEK = 1;
 
-// ============================================================================
-// MATCH FILE PARSER
-// ============================================================================
-
-/**
- * Parsed stats for a single player from a vlrScraper TSV match file.
- */
 interface ParsedPlayerStats {
   name: string;
   rating: number;
@@ -40,101 +25,66 @@ interface ParsedPlayerStats {
   firstDeaths: number;
 }
 
-/**
- * Parses a vlrScraper TSV match file.
- *
- * File format:
- * - Line 1: Header row (Rating, ACS, Kills, Deaths, Assists, +/-, KAST, ADR, HS%, FK, FD, +/-)
- * - Subsequent lines alternate: player name line, then stats line (tab-separated)
- * - 10 players per file (5 per team)
- * - Stats may be separated by double-tabs
- * - Percentage values include "%" symbol
- * - +/- values include the sign
- *
- * @param filePath - Absolute path to the TSV match file.
- * @returns Array of parsed player stats (10 per match).
- */
-function parseMatchFile(filePath: string): ParsedPlayerStats[] {
-  const content = fs.readFileSync(filePath, 'utf-8');
-  const lines = content.split('\n').filter((line) => line.trim() !== '');
-
-  // Skip header line (index 0)
-  const dataLines = lines.slice(1);
-  const players: ParsedPlayerStats[] = [];
-
-  for (let i = 0; i < dataLines.length; i += 2) {
-    const nameLine = dataLines[i];
-    const statsLine = dataLines[i + 1];
-
-    if (!nameLine || !statsLine) break;
-
-    const playerName = nameLine.trim();
-    // Split on one or more tabs
-    const parts = statsLine.split(/\t+/).map((s) => s.trim()).filter((s) => s !== '');
-
-    // Expected order: Rating, ACS, Kills, Deaths, Assists, +/-, KAST, ADR, HS%, FK, FD, +/-
-    // Index:           0       1     2      3       4        5     6     7    8    9   10   11
-    if (parts.length < 12) {
-      console.warn(`Skipping ${playerName}: expected 12 stats columns, got ${parts.length}`);
-      continue;
-    }
-
-    players.push({
-      name: playerName,
-      rating: parseFloat(parts[0]),
-      acs: parseFloat(parts[1]),
-      kills: parseInt(parts[2], 10),
-      deaths: parseInt(parts[3], 10),
-      assists: parseInt(parts[4], 10),
-      // parts[5] is +/- (kills - deaths), we don't store this separately
-      kast: parseFloat(parts[6].replace('%', '')),
-      adr: parseFloat(parts[7]),
-      hsPercent: parseFloat(parts[8].replace('%', '')),
-      firstKills: parseInt(parts[9], 10),
-      firstDeaths: parseInt(parts[10], 10),
-      // parts[11] is +/- (FK - FD), we don't store this separately
-    });
-  }
-
-  return players;
-}
-
-// ============================================================================
-// VCT PRO PLAYER DATA
-// ============================================================================
-
-/**
- * Real VCT team names per region. Used to distribute players across teams.
- */
-const TEAMS_BY_REGION: Record<string, string[]> = {
+const TEAMS_BY_REGION: Record<Region, string[]> = {
   Americas: [
-    'Sentinels', 'Cloud9', 'NRG Esports', '100 Thieves', 'Evil Geniuses',
-    'LOUD', 'FURIA', 'MIBR', 'Leviatán', 'KRÜ Esports',
-    'G2 Esports', '2Game Esports',
+    'Sentinels',
+    'Cloud9',
+    'NRG Esports',
+    '100 Thieves',
+    'Evil Geniuses',
+    'LOUD',
+    'FURIA',
+    'MIBR',
+    'Leviatan',
+    'KRU Esports',
+    'G2 Esports',
+    '2Game Esports',
   ],
   Pacific: [
-    'Paper Rex', 'DRX', 'T1', 'Gen.G', 'ZETA DIVISION',
-    'DetonatioN FocusMe', 'Team Secret', 'Talon Esports', 'Global Esports', 'RRQ',
-    'Nongshim RedForce', 'Rex Regum Qeon',
+    'Paper Rex',
+    'DRX',
+    'T1',
+    'Gen.G',
+    'ZETA DIVISION',
+    'DetonatioN FocusMe',
+    'Team Secret',
+    'Talon Esports',
+    'Global Esports',
+    'RRQ',
+    'Nongshim RedForce',
+    'Rex Regum Qeon',
   ],
   EMEA: [
-    'Fnatic', 'Team Vitality', 'Team Heretics', 'Karmine Corp', 'Navi',
-    'FUT Esports', 'BBL Esports', 'Giants Gaming', 'KOI', 'Team Liquid',
-    'Gentle Mates', 'Apeks',
+    'Fnatic',
+    'Team Vitality',
+    'Team Heretics',
+    'Karmine Corp',
+    'NAVI',
+    'FUT Esports',
+    'BBL Esports',
+    'Giants Gaming',
+    'KOI',
+    'Team Liquid',
+    'Gentle Mates',
+    'Apeks',
   ],
   China: [
-    'EDward Gaming', 'Bilibili Gaming', 'FunPlus Phoenix', 'Trace Esports', 'Nova Esports',
-    'Dragon Ranger Gaming', 'All Gamers', 'Wolves Esports', 'JD Gaming', 'Titan Esports',
-    'Attacking Soul Esports', 'Tyloo',
+    'EDward Gaming',
+    'Bilibili Gaming',
+    'FunPlus Phoenix',
+    'Trace Esports',
+    'Nova Esports',
+    'Dragon Ranger Gaming',
+    'All Gamers',
+    'Wolves Esports',
+    'JD Gaming',
+    'Titan Esports',
+    'Attacking Soul Esports',
+    'Tyloo',
   ],
 };
 
-/**
- * Realistic player names per region.
- * 60 players per region = 240 total.
- * Names are inspired by real VCT pros or common esports naming conventions.
- */
-const PLAYER_NAMES_BY_REGION: Record<string, string[]> = {
+const PLAYER_NAMES_BY_REGION: Record<Region, string[]> = {
   Americas: [
     'TenZ', 'ShahZaM', 'SicK', 'dapr', 'zombs',
     'Asuna', 'bang', 'Cryocells', 'Ethan', 'Boostio',
@@ -144,10 +94,10 @@ const PLAYER_NAMES_BY_REGION: Record<string, string[]> = {
     'artzin', 'koalanoob', 'alym', 'eeiu', 'nerve',
     'mta', 'infiltrator', 'NagZ', 'benG', 'Governor',
     'kiNgg', 'spike', 'blowz', 'PxS', 'Sato',
-    'Tacolilla', 'NagZet', 'Melser', 'Shyy', 'Klaus',
-    'Reduxx', 'Derrek', 'Zekken', 'Supamen', 'BabyJ',
-    'Wardell', 'Leaf', 'xand', 'Trent', 'mitch',
-    'Jawgemo', 'C0M', 'Sayaplayer', 'valyn', 'stellar',
+    'Tacolilla', 'Timotino', 'Melser', 'Shyy', 'Klaus',
+    'Reduxx', 'Derrek', 'Zekken', 'Supamen', 'Xeppaa',
+    'penny', 'Leaf', 'v1c', 'Trent', 'Zellsis',
+    'Jawgemo', 'C0M', 'OXY', 'valyn', 'vora',
   ],
   Pacific: [
     'f0rsakeN', 'Jinggg', 'mindfreak', 'd4v41', 'Benkai',
@@ -173,12 +123,12 @@ const PLAYER_NAMES_BY_REGION: Record<string, string[]> = {
     'miniboo', 'Zyppan', 'russ', 'Boo', 'Kicks',
     'zmjjkk', 'Wo0t', 'adverso', 'sheydos', 'starxo',
     'Jady', 'daveeys', 'tuohai', 'Mazino', 'Cender',
-    'lowel', 'Monstark', 'nataN', 'Mistic', 'd3ffo',
+    'lowel', 'Monstark', 'nataN', 'Mistic2', 'd3ffo',
     'ShadoW', 'elllement', 'HyP', 'zeek', 'vakk',
-    'Entropy', 'PetitSkel', 'NooRi', 'Mako', 'Twisten',
+    'Entropy', 'PetitSkel', 'NooRi', 'MakoEMEA', 'Twisten',
   ],
   China: [
-    'ZmjjKK', 'CHICHOO', 'nobody', 'Haodong', 'abo',
+    'ZmjjKKCN', 'CHICHOO', 'nobodyCN', 'Haodong', 'abo',
     'Kai', 'Flex1N', 'DavidMon', 'Lunai', 'SmilE',
     'Yuicaw', 'Spring', 'Biank', 'whzy', 'Kivi',
     'XinQ', 'Tian', 'FengF', 'Monk', 'KAi',
@@ -193,68 +143,77 @@ const PLAYER_NAMES_BY_REGION: Record<string, string[]> = {
   ],
 };
 
-/**
- * Assigns roles to players, distributing roughly evenly:
- * 15 per role per region (60 / 4 = 15).
- */
+const MATCH_NAME_ALIASES: Record<string, string> = {
+  zmjjkk: 'ZmjjKKCN',
+  nobody: 'nobodyCN',
+};
+
+function normalizeName(name: string): string {
+  return name.toLowerCase().replace(/\s+/g, '');
+}
+
 function assignRole(index: number): PlayerRole {
   const roles: PlayerRole[] = ['Duelist', 'Initiator', 'Controller', 'Sentinel'];
-  return roles[index % 4];
+  return roles[index % roles.length];
 }
 
-// ============================================================================
-// SEED FUNCTIONS
-// ============================================================================
+function parseMatchFile(filePath: string): ParsedPlayerStats[] {
+  const content = fs.readFileSync(filePath, 'utf-8');
+  const lines = content.split('\n').filter((line) => line.trim() !== '');
+  const dataLines = lines.slice(1);
+  const players: ParsedPlayerStats[] = [];
 
-/**
- * Creates all 240 VCT pro players and returns a map from player name to player ID.
- */
-async function seedPlayers(): Promise<Map<string, string>> {
-  console.log('Seeding 240 VCT pro players...');
-  const playerNameToId = new Map<string, string>();
+  for (let index = 0; index < dataLines.length; index += 2) {
+    const nameLine = dataLines[index];
+    const statsLine = dataLines[index + 1];
 
-  for (const regionStr of Object.keys(PLAYER_NAMES_BY_REGION)) {
-    const region = regionStr as Region;
-    const names = PLAYER_NAMES_BY_REGION[regionStr];
-    const teams = TEAMS_BY_REGION[regionStr];
-
-    for (let i = 0; i < names.length; i++) {
-      const name = names[i];
-      const team = teams[i % teams.length];
-      const role = assignRole(i);
-
-      const player = await prisma.player.upsert({
-        where: {
-          // Use a composite-like lookup by name+team since we don't have a unique on name alone
-          id: 'lookup', // This won't match, we'll use create path
-        },
-        update: {},
-        create: {
-          name,
-          team,
-          region,
-          role,
-        },
-      });
-
-      playerNameToId.set(name.toLowerCase(), player.id);
+    if (!nameLine || !statsLine) {
+      break;
     }
+
+    const values = statsLine.split(/\t+/).map((value) => value.trim()).filter(Boolean);
+    if (values.length < 12) {
+      continue;
+    }
+
+    players.push({
+      name: nameLine.trim(),
+      rating: Number.parseFloat(values[0]),
+      acs: Number.parseFloat(values[1]),
+      kills: Number.parseInt(values[2], 10),
+      deaths: Number.parseInt(values[3], 10),
+      assists: Number.parseInt(values[4], 10),
+      kast: Number.parseFloat(values[6].replace('%', '')),
+      adr: Number.parseFloat(values[7]),
+      hsPercent: Number.parseFloat(values[8].replace('%', '')),
+      firstKills: Number.parseInt(values[9], 10),
+      firstDeaths: Number.parseInt(values[10], 10),
+    });
   }
 
-  console.log(`  Created ${playerNameToId.size} players.`);
-  return playerNameToId;
+  return players;
 }
 
-/**
- * Alternative seeder that uses createMany for better performance.
- * Returns a map from lowercase player name to player ID.
- */
-async function seedPlayersEfficient(): Promise<Map<string, string>> {
-  console.log('Seeding 240 VCT pro players...');
-
-  // First, delete existing players to avoid conflicts on re-seed
+async function resetData(): Promise<void> {
+  await prisma.tradeItem.deleteMany();
+  await prisma.trade.deleteMany();
+  await prisma.draftQueueEntry.deleteMany();
+  await prisma.weeklyScore.deleteMany();
+  await prisma.lineupSlot.deleteMany();
+  await prisma.weeklyLineup.deleteMany();
+  await prisma.rosterPlayer.deleteMany();
+  await prisma.roster.deleteMany();
+  await prisma.draftPick.deleteMany();
+  await prisma.draftState.deleteMany();
+  await prisma.leagueWeek.deleteMany();
+  await prisma.leagueMember.deleteMany();
+  await prisma.league.deleteMany();
   await prisma.playerMatchStats.deleteMany();
   await prisma.player.deleteMany();
+}
+
+async function seedPlayers(): Promise<Map<string, string>> {
+  console.log('Seeding 240 VCT pro players...');
 
   const playerRecords: Array<{
     name: string;
@@ -263,78 +222,71 @@ async function seedPlayersEfficient(): Promise<Map<string, string>> {
     role: PlayerRole;
   }> = [];
 
-  for (const regionStr of Object.keys(PLAYER_NAMES_BY_REGION)) {
-    const region = regionStr as Region;
-    const names = PLAYER_NAMES_BY_REGION[regionStr];
-    const teams = TEAMS_BY_REGION[regionStr];
+  (Object.keys(PLAYER_NAMES_BY_REGION) as Region[]).forEach((region) => {
+    const teams = TEAMS_BY_REGION[region];
+    const names = PLAYER_NAMES_BY_REGION[region];
 
-    for (let i = 0; i < names.length; i++) {
+    names.forEach((name, index) => {
       playerRecords.push({
-        name: names[i],
-        team: teams[i % teams.length],
+        name,
+        team: teams[index % teams.length],
         region,
-        role: assignRole(i),
+        role: assignRole(index),
       });
-    }
-  }
+    });
+  });
 
   await prisma.player.createMany({ data: playerRecords });
 
-  // Fetch all players to build the name→id map
-  const allPlayers = await prisma.player.findMany({ select: { id: true, name: true } });
+  const players = await prisma.player.findMany({
+    select: {
+      id: true,
+      name: true,
+    },
+  });
   const playerNameToId = new Map<string, string>();
-  for (const p of allPlayers) {
-    playerNameToId.set(p.name.toLowerCase(), p.id);
-  }
 
-  console.log(`  Created ${playerNameToId.size} players.`);
+  players.forEach((player) => {
+    playerNameToId.set(normalizeName(player.name), player.id);
+  });
+
+  console.log(`  Created ${playerRecords.length} players.`);
   return playerNameToId;
 }
 
-/**
- * Parses the existing vlrScraper match files and creates PlayerMatchStats records.
- * Only creates stats for players that exist in the database (by name match).
- *
- * @param playerNameToId - Map from lowercase player name to database player ID.
- */
-async function seedMatchStats(playerNameToId: Map<string, string>): Promise<void> {
+async function seedMatchStats(playerNameToId: Map<string, string>): Promise<string[]> {
   console.log('Parsing match files and seeding stats...');
 
-  const matchFiles: Array<{ path: string; matchId: string }> = [
-    {
-      path: 'c:/Users/water/Desktop/site/vlrScraper/vlrScraper/match596400.json',
-      matchId: '596400',
-    },
-    {
-      path: 'c:/Users/water/Desktop/site/vlrScraper/vlrScraper/match596401.json',
-      matchId: '596401',
-    },
-    {
-      path: 'c:/Users/water/Desktop/site/vlrScraper/vlrScraper/match596402.json',
-      matchId: '596402',
-    },
-  ];
+  const matchedPlayerIds = new Set<string>();
+  let importedCount = 0;
+  let skippedCount = 0;
 
-  let totalCreated = 0;
-  let totalSkipped = 0;
+  for (const fileName of MATCH_FILES) {
+    const filePath = path.join(MATCH_FILE_DIRECTORY, fileName);
+    const matchId = fileName.replace(/\D/g, '');
 
-  for (const { path: filePath, matchId } of matchFiles) {
     if (!fs.existsSync(filePath)) {
-      console.warn(`  Match file not found: ${filePath} — skipping.`);
+      console.warn(`  Missing match file: ${filePath}`);
       continue;
     }
 
     const parsedPlayers = parseMatchFile(filePath);
-    console.log(`  Match ${matchId}: parsed ${parsedPlayers.length} players`);
+    console.log(`  ${fileName}: parsed ${parsedPlayers.length} players`);
 
     for (const stats of parsedPlayers) {
-      const playerId = playerNameToId.get(stats.name.toLowerCase());
+      const normalizedName = normalizeName(stats.name);
+      const alias = MATCH_NAME_ALIASES[normalizedName];
+      const playerId =
+        playerNameToId.get(normalizedName) ??
+        (alias ? playerNameToId.get(normalizeName(alias)) : undefined);
 
       if (!playerId) {
-        console.warn(`    Player "${stats.name}" not found in database — skipping.`);
-        totalSkipped++;
+        console.warn(`    Player "${stats.name}" not found in player pool; skipping.`);
+        skippedCount += 1;
         continue;
       }
+
+      matchedPlayerIds.add(playerId);
 
       await prisma.playerMatchStats.upsert({
         where: {
@@ -344,6 +296,7 @@ async function seedMatchStats(playerNameToId: Map<string, string>): Promise<void
           },
         },
         update: {
+          weekNumber: ACTIVE_LEAGUE_WEEK,
           kills: stats.kills,
           deaths: stats.deaths,
           assists: stats.assists,
@@ -360,6 +313,7 @@ async function seedMatchStats(playerNameToId: Map<string, string>): Promise<void
         create: {
           playerId,
           externalMatchId: matchId,
+          weekNumber: ACTIVE_LEAGUE_WEEK,
           kills: stats.kills,
           deaths: stats.deaths,
           assists: stats.assists,
@@ -375,20 +329,15 @@ async function seedMatchStats(playerNameToId: Map<string, string>): Promise<void
         },
       });
 
-      totalCreated++;
+      importedCount += 1;
     }
   }
 
-  console.log(`  Stats seeded: ${totalCreated} created, ${totalSkipped} skipped (player not found).`);
+  console.log(`  Stats seeded: ${importedCount} rows imported, ${skippedCount} rows skipped.`);
+  return [...matchedPlayerIds];
 }
 
-/**
- * Creates sample test data: 4 fake users and 1 test league in SETUP status.
- */
-async function seedTestData(): Promise<void> {
-  console.log('Creating sample test data...');
-
-  // Create 4 fake test users
+async function upsertTestUsers(): Promise<Array<{ id: string; name: string | null; email: string | null }>> {
   const testUsers = [
     { name: 'Alice TestUser', email: 'alice@test.com' },
     { name: 'Bob TestUser', email: 'bob@test.com' },
@@ -396,79 +345,263 @@ async function seedTestData(): Promise<void> {
     { name: 'Diana TestUser', email: 'diana@test.com' },
   ];
 
-  const createdUsers: Array<{ id: string; name: string | null; email: string | null }> = [];
+  const users: Array<{ id: string; name: string | null; email: string | null }> = [];
 
   for (const userData of testUsers) {
     const user = await prisma.user.upsert({
       where: { email: userData.email },
       update: { name: userData.name },
-      create: {
-        name: userData.name,
-        email: userData.email,
-      },
+      create: userData,
     });
-    createdUsers.push(user);
+    users.push(user);
   }
 
-  console.log(`  Created ${createdUsers.length} test users.`);
+  return users;
+}
 
-  // Create 1 test league
+function determineSlotType(rosterSize: number, role: PlayerRole, existingSlotTypes: SlotType[]): SlotType {
+  const slotConfig = ROLE_SLOTS_BY_ROSTER_SIZE[rosterSize];
+  const filledCounts = existingSlotTypes.reduce<Record<SlotType, number>>(
+    (counts, slotType) => {
+      counts[slotType] += 1;
+      return counts;
+    },
+    {
+      Duelist: 0,
+      Initiator: 0,
+      Controller: 0,
+      Sentinel: 0,
+      Wildcard: 0,
+    }
+  );
+
+  if (filledCounts[role] < slotConfig[role]) {
+    return role;
+  }
+
+  if (filledCounts.Wildcard < slotConfig.Wildcard) {
+    return 'Wildcard';
+  }
+
+  return 'Wildcard';
+}
+
+async function createSetupLeague(users: Array<{ id: string }>): Promise<void> {
+  console.log('Creating setup league...');
+
   const league = await prisma.league.create({
     data: {
-      name: 'VCT Fantasy Test League',
+      name: 'VCT Fantasy Draft Lobby',
       inviteCode: 'TESTCODE',
       status: 'SETUP',
-      creatorId: createdUsers[0].id,
+      creatorId: users[0].id,
       rosterSize: 10,
       draftPickTime: 60,
+      currentWeek: 1,
     },
   });
 
-  console.log(`  Created test league: "${league.name}" (code: ${league.inviteCode})`);
+  await prisma.leagueWeek.create({
+    data: {
+      leagueId: league.id,
+      weekNumber: 1,
+    },
+  });
 
-  // Add all 4 users as league members
-  for (const user of createdUsers) {
-    await prisma.leagueMember.upsert({
-      where: {
-        leagueId_userId: {
-          leagueId: league.id,
-          userId: user.id,
-        },
-      },
-      update: {},
-      create: {
+  for (const user of users) {
+    await prisma.leagueMember.create({
+      data: {
         leagueId: league.id,
         userId: user.id,
       },
     });
   }
 
-  console.log(`  Added ${createdUsers.length} members to test league.`);
-
-  // Create a draft state in WAITING status
   await prisma.draftState.create({
     data: {
       leagueId: league.id,
       status: 'WAITING',
       currentRound: 1,
       currentPickIndex: 0,
-      draftOrder: createdUsers.map((u) => u.id),
+      draftOrder: users.map((user) => user.id),
     },
   });
 
-  console.log('  Created draft state (WAITING).');
+  console.log('  Setup league created with 4 members and waiting draft state.');
 }
 
-// ============================================================================
-// MAIN
-// ============================================================================
+async function createActiveLeague(
+  users: Array<{ id: string }>,
+  statPlayerIds: string[]
+): Promise<void> {
+  console.log('Creating active sample league...');
+
+  const requiredPlayers = ACTIVE_LEAGUE_MEMBER_COUNT * ACTIVE_LEAGUE_ROSTER_SIZE;
+  if (statPlayerIds.length < requiredPlayers) {
+    throw new Error(`Need at least ${requiredPlayers} players with imported stats to seed the active league.`);
+  }
+
+  const selectedPlayers = await prisma.player.findMany({
+    where: {
+      id: {
+        in: statPlayerIds.slice(0, requiredPlayers),
+      },
+    },
+    select: {
+      id: true,
+      role: true,
+    },
+  });
+  const playerById = new Map(selectedPlayers.map((player) => [player.id, player]));
+
+  const league = await prisma.league.create({
+    data: {
+      name: 'VCT Fantasy Active League',
+      inviteCode: 'ACTIVE01',
+      status: 'ACTIVE',
+      creatorId: users[0].id,
+      rosterSize: ACTIVE_LEAGUE_ROSTER_SIZE,
+      draftPickTime: 60,
+      currentWeek: ACTIVE_LEAGUE_WEEK,
+    },
+  });
+
+  await prisma.leagueWeek.createMany({
+    data: [
+      {
+        leagueId: league.id,
+        weekNumber: ACTIVE_LEAGUE_WEEK,
+      },
+      {
+        leagueId: league.id,
+        weekNumber: ACTIVE_LEAGUE_WEEK + 1,
+      },
+    ],
+  });
+
+  const activeLeagueUsers = users.slice(0, ACTIVE_LEAGUE_MEMBER_COUNT);
+  const memberships = [];
+
+  for (const user of activeLeagueUsers) {
+    memberships.push(
+      await prisma.leagueMember.create({
+        data: {
+          leagueId: league.id,
+          userId: user.id,
+        },
+      })
+    );
+  }
+
+  const draftOrder = activeLeagueUsers.map((user) => user.id);
+  const draftState = await prisma.draftState.create({
+    data: {
+      leagueId: league.id,
+      status: 'COMPLETE',
+      currentRound: ACTIVE_LEAGUE_ROSTER_SIZE,
+      currentPickIndex: 0,
+      draftOrder,
+      startedAt: new Date(Date.now() - 1000 * 60 * 60),
+      completedAt: new Date(Date.now() - 1000 * 60 * 45),
+    },
+  });
+
+  const rosters = new Map<string, { id: string; slotTypes: SlotType[]; rosterPlayerIds: string[] }>();
+  for (const membership of memberships) {
+    const roster = await prisma.roster.create({
+      data: {
+        leagueId: league.id,
+        leagueMemberId: membership.id,
+      },
+    });
+
+    rosters.set(membership.userId, {
+      id: roster.id,
+      slotTypes: [],
+      rosterPlayerIds: [],
+    });
+  }
+
+  let pickNumber = 1;
+  const snakePlayerIds = statPlayerIds.slice(0, requiredPlayers);
+
+  for (let round = 1; round <= ACTIVE_LEAGUE_ROSTER_SIZE; round += 1) {
+    const roundOrder = round % 2 === 0 ? [...draftOrder].reverse() : draftOrder;
+
+    for (const userId of roundOrder) {
+      const playerId = snakePlayerIds[pickNumber - 1];
+      const player = playerById.get(playerId);
+      const roster = rosters.get(userId);
+
+      if (!player || !roster) {
+        throw new Error('Failed to build active league draft state.');
+      }
+
+      const slotType = determineSlotType(ACTIVE_LEAGUE_ROSTER_SIZE, player.role, roster.slotTypes);
+      const isCaptain = round === 1;
+
+      await prisma.draftPick.create({
+        data: {
+          draftStateId: draftState.id,
+          userId,
+          playerId,
+          round,
+          pickNumber,
+          isCaptain,
+          slotType,
+        },
+      });
+
+      const rosterPlayer = await prisma.rosterPlayer.create({
+        data: {
+          rosterId: roster.id,
+          playerId,
+          isCaptain,
+          slotType,
+        },
+      });
+
+      roster.slotTypes.push(slotType);
+      roster.rosterPlayerIds.push(rosterPlayer.id);
+      pickNumber += 1;
+    }
+  }
+
+  for (const roster of rosters.values()) {
+    const weeklyLineup = await prisma.weeklyLineup.create({
+      data: {
+        rosterId: roster.id,
+        weekNumber: ACTIVE_LEAGUE_WEEK,
+      },
+    });
+
+    const activeRosterPlayerIds = roster.rosterPlayerIds.slice(0, 5);
+    const starRosterPlayerId = activeRosterPlayerIds[1] ?? activeRosterPlayerIds[0];
+
+    for (const rosterPlayerId of activeRosterPlayerIds) {
+      await prisma.lineupSlot.create({
+        data: {
+          weeklyLineupId: weeklyLineup.id,
+          rosterPlayerId,
+          isStarPlayer: rosterPlayerId === starRosterPlayerId,
+        },
+      });
+    }
+  }
+
+  await saveLeagueWeekScores(league.id, ACTIVE_LEAGUE_WEEK);
+  console.log('  Active league created with completed draft, rosters, lineups, and scores.');
+}
 
 async function main(): Promise<void> {
   console.log('=== VCT Fantasy League Database Seed ===\n');
 
-  const playerNameToId = await seedPlayersEfficient();
-  await seedMatchStats(playerNameToId);
-  await seedTestData();
+  await resetData();
+  const playerNameToId = await seedPlayers();
+  const statPlayerIds = await seedMatchStats(playerNameToId);
+  const users = await upsertTestUsers();
+  await createSetupLeague(users);
+  await createActiveLeague(users, statPlayerIds);
 
   console.log('\n=== Seed complete! ===');
 }
@@ -477,8 +610,8 @@ main()
   .then(async () => {
     await prisma.$disconnect();
   })
-  .catch(async (e) => {
-    console.error('Seed failed:', e);
+  .catch(async (error) => {
+    console.error('Seed failed:', error);
     await prisma.$disconnect();
     process.exit(1);
   });

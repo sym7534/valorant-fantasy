@@ -6,14 +6,12 @@ import Select from '@/src/components/ui/Select';
 import Button from '@/src/components/ui/Button';
 import Card from '@/src/components/ui/Card';
 import {
-  MIN_ROSTER_SIZE,
-  MAX_ROSTER_SIZE,
-  DEFAULT_ROSTER_SIZE,
   DEFAULT_DRAFT_TIMER,
+  DEFAULT_ROSTER_SIZE,
   DRAFT_TIMER_OPTIONS,
-  MIN_LEAGUE_SIZE,
-  MAX_LEAGUE_SIZE,
   LEAGUE_NAME_MAX_LENGTH,
+  MAX_ROSTER_SIZE,
+  MIN_ROSTER_SIZE,
   SCORING_WEIGHTS,
 } from '@/src/lib/game-config';
 
@@ -27,60 +25,54 @@ export default function CreateLeagueForm({
   className = '',
 }: CreateLeagueFormProps): React.ReactElement {
   const [name, setName] = useState('');
-  const [maxPlayers, setMaxPlayers] = useState(String(8));
   const [draftPickTime, setDraftPickTime] = useState(String(DEFAULT_DRAFT_TIMER));
   const [rosterSize, setRosterSize] = useState(String(DEFAULT_ROSTER_SIZE));
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  const maxPlayersOptions = Array.from(
-    { length: MAX_LEAGUE_SIZE - MIN_LEAGUE_SIZE + 1 },
-    (_, i) => {
-      const val = MIN_LEAGUE_SIZE + i;
-      return { label: `${val} players`, value: String(val) };
-    }
-  );
-
-  const timerOptions = DRAFT_TIMER_OPTIONS.map((s) => ({
-    label: s >= 60 ? `${s / 60}m` : `${s}s`,
-    value: String(s),
+  const timerOptions = DRAFT_TIMER_OPTIONS.map((seconds) => ({
+    label: seconds >= 60 ? `${seconds / 60}m` : `${seconds}s`,
+    value: String(seconds),
   }));
 
   const rosterOptions = Array.from(
     { length: MAX_ROSTER_SIZE - MIN_ROSTER_SIZE + 1 },
-    (_, i) => {
-      const val = MIN_ROSTER_SIZE + i;
-      return { label: `${val} players`, value: String(val) };
+    (_, index) => {
+      const value = MIN_ROSTER_SIZE + index;
+      return { label: `${value} players`, value: String(value) };
     }
   );
 
-  async function handleSubmit(e: React.FormEvent): Promise<void> {
-    e.preventDefault();
+  async function handleSubmit(event: React.FormEvent): Promise<void> {
+    event.preventDefault();
+
     if (!name.trim()) {
       setError('League name is required');
       return;
     }
+
     setIsLoading(true);
     setError(null);
 
     try {
-      const res = await fetch('/api/leagues', {
+      const response = await fetch('/api/leagues', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: {
+          'Content-Type': 'application/json',
+        },
         body: JSON.stringify({
           name: name.trim(),
           rosterSize: Number(rosterSize),
           draftPickTime: Number(draftPickTime),
         }),
       });
+      const data = (await response.json()) as { league?: { id: string }; error?: string };
 
-      if (!res.ok) {
-        const data = await res.json();
+      if (!response.ok || !data.league) {
         setError(data.error ?? 'Failed to create league');
         return;
       }
 
-      const data = await res.json();
       onSuccess?.(data.league.id);
     } catch {
       setError('Network error. Please try again.');
@@ -94,26 +86,18 @@ export default function CreateLeagueForm({
       <Input
         label="League Name"
         value={name}
-        onChange={(e) => setName(e.target.value.slice(0, LEAGUE_NAME_MAX_LENGTH))}
+        onChange={(event) => setName(event.target.value.slice(0, LEAGUE_NAME_MAX_LENGTH))}
         placeholder="Enter league name"
         maxLength={LEAGUE_NAME_MAX_LENGTH}
         helperText={`${name.length}/${LEAGUE_NAME_MAX_LENGTH} characters`}
       />
 
-      <div className="grid grid-cols-2 gap-4">
-        <Select
-          label="Max Players"
-          options={maxPlayersOptions}
-          value={maxPlayers}
-          onChange={setMaxPlayers}
-        />
-        <Select
-          label="Roster Size"
-          options={rosterOptions}
-          value={rosterSize}
-          onChange={setRosterSize}
-        />
-      </div>
+      <Select
+        label="Roster Size"
+        options={rosterOptions}
+        value={rosterSize}
+        onChange={setRosterSize}
+      />
 
       <Select
         label="Timer Per Pick"
@@ -122,7 +106,6 @@ export default function CreateLeagueForm({
         onChange={setDraftPickTime}
       />
 
-      {/* Scoring summary */}
       <Card className="p-4">
         <h4 className="text-xs font-bold font-[family-name:var(--font-display)] uppercase tracking-wider text-[var(--text-secondary)] mb-3">
           Scoring Formula
@@ -147,9 +130,7 @@ export default function CreateLeagueForm({
         </div>
       </Card>
 
-      {error && (
-        <p className="text-sm text-[var(--status-error)]">{error}</p>
-      )}
+      {error && <p className="text-sm text-[var(--status-error)]">{error}</p>}
 
       <Button type="submit" variant="primary" size="lg" isLoading={isLoading} className="w-full">
         Create League

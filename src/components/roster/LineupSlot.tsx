@@ -2,13 +2,44 @@
 
 import React from 'react';
 import PlayerCard from '@/src/components/player/PlayerCard';
-import type { RosterPlayer } from '@/src/lib/mock-data';
+import type { PlayerMatchStats } from '@/src/lib/game-config';
+
+type LineupPlayer = {
+  id: string;
+  playerId?: string;
+  player: {
+    id: string;
+    name: string;
+    team: string;
+    region: 'Americas' | 'Pacific' | 'EMEA' | 'China';
+    role: 'Duelist' | 'Initiator' | 'Controller' | 'Sentinel';
+    imageUrl?: string | null;
+  };
+  isCaptain: boolean;
+  isStarPlayer: boolean;
+  weeklyPoints?: number | null;
+};
 
 interface LineupSlotProps {
-  rosterPlayer?: RosterPlayer;
+  rosterPlayer?: LineupPlayer;
   index: number;
   onSwap?: () => void;
   className?: string;
+}
+
+function buildStableStats(playerId: string): PlayerMatchStats {
+  const seed = Array.from(playerId).reduce((sum, char) => sum + char.charCodeAt(0), 0);
+
+  return {
+    kills: 10 + (seed % 18),
+    deaths: 6 + (seed % 10),
+    assists: 3 + (seed % 9),
+    firstKills: seed % 5,
+    firstDeaths: seed % 4,
+    roundsWon: 0,
+    roundsLost: 0,
+    adr: 120 + (seed % 50),
+  };
 }
 
 export default function LineupSlot({
@@ -17,8 +48,8 @@ export default function LineupSlot({
   onSwap,
   className = '',
 }: LineupSlotProps): React.ReactElement {
-  // Stagger offset for depth feel
-  const offset = index === 0 ? 'mt-4' : index === 1 ? 'mt-0' : index === 2 ? '-mt-2' : index === 3 ? 'mt-0' : 'mt-4';
+  const offset =
+    index === 0 ? 'mt-4' : index === 1 ? 'mt-0' : index === 2 ? '-mt-2' : index === 3 ? 'mt-0' : 'mt-4';
 
   if (!rosterPlayer) {
     return (
@@ -30,18 +61,12 @@ export default function LineupSlot({
     );
   }
 
-  const stats = {
-    kills: Math.floor(Math.random() * 20) + 8,
-    deaths: Math.floor(Math.random() * 15) + 5,
-    assists: Math.floor(Math.random() * 10) + 2,
-    firstKills: Math.floor(Math.random() * 6),
-    firstDeaths: Math.floor(Math.random() * 4),
-    roundsWon: 0,
-    roundsLost: 0,
-    adr: Math.floor(Math.random() * 60) + 120,
-  };
-
-  const designation = rosterPlayer.isStarPlayer ? 'star' as const : rosterPlayer.isCaptain ? 'captain' as const : 'normal' as const;
+  const stats = buildStableStats(rosterPlayer.playerId ?? rosterPlayer.player.id);
+  const designation = rosterPlayer.isStarPlayer
+    ? 'star'
+    : rosterPlayer.isCaptain
+      ? 'captain'
+      : 'normal';
 
   return (
     <div className={`relative group ${offset} ${className}`}>
@@ -50,9 +75,8 @@ export default function LineupSlot({
         variant="full"
         designation={designation}
         stats={stats}
-        fantasyPoints={rosterPlayer.weeklyPoints}
+        fantasyPoints={rosterPlayer.weeklyPoints ?? undefined}
       />
-      {/* Swap overlay on hover - only for non-captain */}
       {!rosterPlayer.isCaptain && onSwap && (
         <button
           onClick={onSwap}

@@ -1,0 +1,367 @@
+// =============================================================================
+// VCT Fantasy League — Prisma Schema
+// Owner: Lead / Game Designer Agent
+//
+// This schema defines ALL database models for the VCT Fantasy League app.
+// The Backend Agent runs `npx prisma migrate dev` and `npx prisma generate`
+// against this file but NEVER edits it directly.
+//
+// Datasource: PostgreSQL via DATABASE_URL env var.
+// =============================================================================
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// =============================================================================
+// ENUMS
+// =============================================================================
+
+/// The four VCT competitive regions.
+enum Region {
+  Americas
+  Pacific
+  EMEA
+  China
+}
+
+/// The four Valorant agent roles.
+enum PlayerRole {
+  Duelist
+  Initiator
+  Controller
+  Sentinel
+}
+
+/// Lifecycle states of a league.
+enum LeagueStatus {
+  SETUP
+  DRAFTING
+  ACTIVE
+  COMPLETED
+}
+
+/// Lifecycle states of a draft.
+enum DraftStatus {
+  WAITING
+  IN_PROGRESS
+  COMPLETE
+}
+
+/// Roster slot types — the four roles plus a flexible Wildcard.
+enum SlotType {
+  Duelist
+  Initiator
+  Controller
+  Sentinel
+  Wildcard
+}
+
+// =============================================================================
+// NEXTAUTH REQUIRED MODELS
+// =============================================================================
+
+/// NextAuth user model. Extended with application relations.
+model User {
+  id            String    @id @default(cuid())
+  name          String?
+  email         String?   @unique
+  emailVerified DateTime?
+  image         String?
+
+  // NextAuth relations
+  accounts Account[]
+  sessions Session[]
+
+  // Application relations
+  createdLeagues League[]       @relation("LeagueCreator")
+  leagueMemberships LeagueMember[]
+  draftPicks     DraftPick[]
+
+  @@map("users")
+}
+
+/// NextAuth account model — stores OAuth provider tokens.
+model Account {
+  id                String  @id @default(cuid())
+  userId            String
+  type              String
+  provider          String
+  providerAccountId String
+  refresh_token     String? @db.Text
+  access_token      String? @db.Text
+  expires_at        Int?
+  token_type        String?
+  scope             String?
+  id_token          String? @db.Text
+  session_state     String?
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([provider, providerAccountId])
+  @@index([userId])
+  @@map("accounts")
+}
+
+/// NextAuth session model — tracks active user sessions.
+model Session {
+  id           String   @id @default(cuid())
+  sessionToken String   @unique
+  userId       String
+  expires      DateTime
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@map("sessions")
+}
+
+/// NextAuth verification token model — used for email verification flows.
+model VerificationToken {
+  identifier String
+  token      String   @unique
+  expires    DateTime
+
+  @@unique([identifier, token])
+  @@map("verification_tokens")
+}
+
+// =============================================================================
+// APPLICATION MODELS
+// =============================================================================
+
+/// A fantasy league created by a user. Contains members who draft players
+/// and compete on a weekly scoring basis.
+model League {
+  id            String       @id @default(cuid())
+  name          String       @db.VarChar(50)
+  inviteCode    String       @unique @db.VarChar(8)
+  status        LeagueStatus @default(SETUP)
+  creatorId     String
+  rosterSize    Int          @default(10)
+  draftPickTime Int          @default(60) /// Draft pick timer in seconds
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  // Relations
+  creator  User           @relation("LeagueCreator", fields: [creatorId], references: [id])
+  members  LeagueMember[]
+  rosters  Roster[]
+  draft    DraftState?
+
+  @@index([creatorId])
+  @@index([inviteCode])
+  @@map("leagues")
+}
+
+/// A user's membership in a league. Each user can be a member of multiple
+/// leagues, and each league has multiple members.
+model LeagueMember {
+  id       String   @id @default(cuid())
+  leagueId String
+  userId   String
+  joinedAt DateTime @default(now())
+
+  // Relations
+  league       League        @relation(fields: [leagueId], references: [id], onDelete: Cascade)
+  user         User          @relation(fields: [userId], references: [id], onDelete: Cascade)
+  roster       Roster?
+  weeklyScores WeeklyScore[]
+
+  @@unique([leagueId, userId])
+  @@index([leagueId])
+  @@index([userId])
+  @@map("league_members")
+}
+
+/// A VCT professional player in the fantasy pool.
+/// 240 players total, ~60 per region, each with a primary role.
+model Player {
+  id       String     @id @default(cuid())
+  name     String
+  team     String
+  region   Region
+  role     PlayerRole
+  imageUrl String?
+
+  // Relations
+  matchStats    PlayerMatchStats[]
+  draftPicks    DraftPick[]
+  rosterPlayers RosterPlayer[]
+
+  @@index([region])
+  @@index([role])
+  @@index([team])
+  @@map("players")
+}
+
+/// Raw match statistics for a single player in a single match.
+/// Created by the stats import endpoint when parsing vlrScraper TSV files.
+/// RoundsWon and RoundsLost default to 0 for MVP.
+model PlayerMatchStats {
+  id              String @id @default(cuid())
+  playerId        String
+  externalMatchId String /// The vlr.gg match ID (e.g., "596400")
+
+  kills      Int
+  deaths     Int
+  assists    Int
+  firstKills Int
+  firstDeaths Int
+  roundsWon  Int   @default(0)
+  roundsLost Int   @default(0)
+  adr        Float
+  acs        Float
+  rating     Float
+  hsPercent  Float
+  kast       Float
+
+  createdAt DateTime @default(now())
+
+  // Relations
+  player Player @relation(fields: [playerId], references: [id], onDelete: Cascade)
+
+  @@unique([playerId, externalMatchId])
+  @@index([playerId])
+  @@index([externalMatchId])
+  @@map("player_match_stats")
+}
+
+/// Tracks the state of a snake draft for a league.
+/// One-to-one with League (each league has at most one draft).
+model DraftState {
+  id               String      @id @default(cuid())
+  leagueId         String      @unique
+  status           DraftStatus @default(WAITING)
+  currentRound     Int         @default(1)
+  currentPickIndex Int         @default(0)
+  draftOrder       Json        /// Array of userId strings representing draft order
+
+  startedAt   DateTime?
+  completedAt DateTime?
+
+  // Relations
+  league League      @relation(fields: [leagueId], references: [id], onDelete: Cascade)
+  picks  DraftPick[]
+
+  @@index([leagueId])
+  @@map("draft_states")
+}
+
+/// A single pick made during the draft.
+/// Round 1 picks are automatically captains (isCaptain = true).
+model DraftPick {
+  id           String   @id @default(cuid())
+  draftStateId String
+  userId       String
+  playerId     String
+  round        Int
+  pickNumber   Int      /// Overall pick number (1-indexed across all rounds)
+  isCaptain    Boolean  @default(false)
+  pickedAt     DateTime @default(now())
+
+  // Relations
+  draftState DraftState @relation(fields: [draftStateId], references: [id], onDelete: Cascade)
+  user       User       @relation(fields: [userId], references: [id])
+  player     Player     @relation(fields: [playerId], references: [id])
+
+  @@index([draftStateId])
+  @@index([userId])
+  @@index([playerId])
+  @@map("draft_picks")
+}
+
+/// A member's roster in a league. One-to-one with LeagueMember.
+/// Contains RosterPlayer entries for each drafted player.
+model Roster {
+  id             String @id @default(cuid())
+  leagueMemberId String @unique
+  leagueId       String
+
+  // Relations
+  leagueMember  LeagueMember  @relation(fields: [leagueMemberId], references: [id], onDelete: Cascade)
+  league        League        @relation(fields: [leagueId], references: [id], onDelete: Cascade)
+  rosterPlayers RosterPlayer[]
+  weeklyLineups WeeklyLineup[]
+
+  @@index([leagueId])
+  @@index([leagueMemberId])
+  @@map("rosters")
+}
+
+/// A player on a member's roster, with their assigned slot type and captain status.
+model RosterPlayer {
+  id        String   @id @default(cuid())
+  rosterId  String
+  playerId  String
+  isCaptain Boolean  @default(false)
+  slotType  SlotType
+
+  // Relations
+  roster      Roster       @relation(fields: [rosterId], references: [id], onDelete: Cascade)
+  player      Player       @relation(fields: [playerId], references: [id])
+  lineupSlots LineupSlot[]
+
+  @@index([rosterId])
+  @@index([playerId])
+  @@map("roster_players")
+}
+
+/// A member's lineup for a specific week. Contains exactly 5 LineupSlot entries
+/// when fully set. Can be locked once the weekly deadline passes.
+model WeeklyLineup {
+  id         String  @id @default(cuid())
+  rosterId   String
+  weekNumber Int
+  isLocked   Boolean @default(false)
+
+  // Relations
+  roster Roster       @relation(fields: [rosterId], references: [id], onDelete: Cascade)
+  slots  LineupSlot[]
+
+  @@unique([rosterId, weekNumber])
+  @@index([rosterId])
+  @@index([weekNumber])
+  @@map("weekly_lineups")
+}
+
+/// A single slot in a weekly lineup. References a RosterPlayer and optionally
+/// designates them as the Star Player for that week.
+model LineupSlot {
+  id             String  @id @default(cuid())
+  weeklyLineupId String
+  rosterPlayerId String
+  isStarPlayer   Boolean @default(false)
+
+  // Relations
+  weeklyLineup WeeklyLineup @relation(fields: [weeklyLineupId], references: [id], onDelete: Cascade)
+  rosterPlayer RosterPlayer @relation(fields: [rosterPlayerId], references: [id])
+
+  @@index([weeklyLineupId])
+  @@index([rosterPlayerId])
+  @@map("lineup_slots")
+}
+
+/// Stores the calculated weekly score for a league member.
+/// Breakdown is a JSON object containing per-player score details.
+model WeeklyScore {
+  id             String @id @default(cuid())
+  leagueMemberId String
+  weekNumber     Int
+  totalPoints    Float
+  breakdown      Json   /// Per-player score details: { playerId: { base, multiplier, final } }
+
+  // Relations
+  leagueMember LeagueMember @relation(fields: [leagueMemberId], references: [id], onDelete: Cascade)
+
+  @@unique([leagueMemberId, weekNumber])
+  @@index([leagueMemberId])
+  @@index([weekNumber])
+  @@map("weekly_scores")
+}

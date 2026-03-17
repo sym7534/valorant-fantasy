@@ -1,0 +1,356 @@
+@import "tailwindcss";
+
+/* ============================================
+   VCT Fantasy League — Design System
+   ============================================ */
+
+@theme {
+  --font-display: var(--font-display);
+  --font-body: var(--font-body);
+}
+
+/* === CSS Custom Properties === */
+:root {
+  /* === Backgrounds === */
+  --bg-primary: #0f1923;
+  --bg-secondary: #1a2634;
+  --bg-tertiary: #243447;
+  --bg-accent: #2c3e50;
+  --bg-overlay: rgba(15, 25, 35, 0.85);
+
+  /* === Brand / Accent === */
+  --accent-red: #ff4655;
+  --accent-red-hover: #ff6b77;
+  --accent-red-muted: #8b2631;
+  --accent-gold: #f5c542;
+  --accent-gold-muted: #8b6914;
+  --accent-teal: #2dd4bf;
+  --accent-teal-hover: #5eead4;
+
+  /* === Text === */
+  --text-primary: #ece8e1;
+  --text-secondary: #8b978f;
+  --text-muted: #5a6672;
+  --text-on-accent: #0f1923;
+
+  /* === Borders === */
+  --border-default: #2a3a4a;
+  --border-subtle: #1e2d3d;
+  --border-accent: rgba(255, 70, 85, 0.2);
+
+  /* === Status === */
+  --status-live: #ef4444;
+  --status-success: #4ade80;
+  --status-warning: #fbbf24;
+  --status-error: #ef4444;
+
+  /* === Shadows / Glows === */
+  --glow-red: 0 0 20px rgba(255, 70, 85, 0.15);
+  --glow-red-strong: 0 0 30px rgba(255, 70, 85, 0.3);
+  --glow-gold: 0 0 15px rgba(245, 197, 66, 0.2);
+  --glow-gold-strong: 0 0 25px rgba(245, 197, 66, 0.35);
+  --glow-teal: 0 0 15px rgba(45, 212, 191, 0.15);
+}
+
+/* === Base Styles === */
+html {
+  color-scheme: dark;
+}
+
+body {
+  background-color: var(--bg-primary);
+  color: var(--text-primary);
+  font-family: var(--font-body), sans-serif;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  overflow-x: hidden;
+}
+
+/* === Selection === */
+::selection {
+  background-color: var(--accent-red);
+  color: var(--text-on-accent);
+}
+
+::-moz-selection {
+  background-color: var(--accent-red);
+  color: var(--text-on-accent);
+}
+
+/* === Scrollbar === */
+::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+
+::-webkit-scrollbar-track {
+  background: var(--bg-primary);
+}
+
+::-webkit-scrollbar-thumb {
+  background: var(--bg-tertiary);
+  border-radius: 4px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: var(--bg-accent);
+}
+
+/* Firefox scrollbar */
+* {
+  scrollbar-width: thin;
+  scrollbar-color: var(--bg-tertiary) var(--bg-primary);
+}
+
+/* === Typography === */
+h1, h2, h3, h4, h5, h6 {
+  font-family: var(--font-display), sans-serif;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+  text-transform: uppercase;
+}
+
+/* === Angular Clip-Path Utilities === */
+.clip-angular {
+  clip-path: polygon(0 0, calc(100% - 12px) 0, 100% 12px, 100% 100%, 12px 100%, 0 calc(100% - 12px));
+}
+
+.clip-angular-sm {
+  clip-path: polygon(0 0, calc(100% - 8px) 0, 100% 8px, 100% 100%, 8px 100%, 0 calc(100% - 8px));
+}
+
+.clip-angular-lg {
+  clip-path: polygon(0 0, calc(100% - 16px) 0, 100% 16px, 100% 100%, 16px 100%, 0 calc(100% - 16px));
+}
+
+.clip-angular-top {
+  clip-path: polygon(0 0, calc(100% - 12px) 0, 100% 12px, 100% 100%, 0 100%);
+}
+
+.clip-angular-left {
+  clip-path: polygon(0 0, 100% 0, 100% 100%, 12px 100%, 0 calc(100% - 12px));
+}
+
+/* === Animation Keyframes === */
+@keyframes fadeIn {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
+@keyframes fadeInUp {
+  from {
+    opacity: 0;
+    transform: translateY(16px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@keyframes fadeInDown {
+  from {
+    opacity: 0;
+    transform: translateY(-16px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@keyframes slideInRight {
+  from {
+    opacity: 0;
+    transform: translateX(24px);
+  }
+  to {
+    opacity: 1;
+    transform: translateX(0);
+  }
+}
+
+@keyframes slideInLeft {
+  from {
+    opacity: 0;
+    transform: translateX(-24px);
+  }
+  to {
+    opacity: 1;
+    transform: translateX(0);
+  }
+}
+
+@keyframes scaleIn {
+  from {
+    opacity: 0;
+    transform: scale(0.95);
+  }
+  to {
+    opacity: 1;
+    transform: scale(1);
+  }
+}
+
+@keyframes pulse-glow {
+  0%, 100% {
+    box-shadow: 0 0 15px rgba(245, 197, 66, 0.2);
+  }
+  50% {
+    box-shadow: 0 0 30px rgba(245, 197, 66, 0.45);
+  }
+}
+
+@keyframes pulse-red {
+  0%, 100% {
+    box-shadow: 0 0 15px rgba(255, 70, 85, 0.15);
+  }
+  50% {
+    box-shadow: 0 0 30px rgba(255, 70, 85, 0.35);
+  }
+}
+
+@keyframes shimmer {
+  0% { background-position: -200% 0; }
+  100% { background-position: 200% 0; }
+}
+
+@keyframes countdown-urgency {
+  0%, 100% { color: var(--accent-red); }
+  50% { color: #ff8a94; }
+}
+
+@keyframes star-rotate {
+  from { transform: rotate(0deg); }
+  to { transform: rotate(360deg); }
+}
+
+@keyframes float {
+  0%, 100% { transform: translateY(0); }
+  50% { transform: translateY(-6px); }
+}
+
+/* === Animation Utility Classes === */
+.animate-fade-in {
+  animation: fadeIn 0.3s ease forwards;
+}
+
+.animate-fade-in-up {
+  animation: fadeInUp 0.4s ease forwards;
+}
+
+.animate-fade-in-down {
+  animation: fadeInDown 0.4s ease forwards;
+}
+
+.animate-slide-in-right {
+  animation: slideInRight 0.4s ease forwards;
+}
+
+.animate-slide-in-left {
+  animation: slideInLeft 0.4s ease forwards;
+}
+
+.animate-scale-in {
+  animation: scaleIn 0.3s ease forwards;
+}
+
+.animate-pulse-glow {
+  animation: pulse-glow 2s ease-in-out infinite;
+}
+
+.animate-pulse-red {
+  animation: pulse-red 2s ease-in-out infinite;
+}
+
+.animate-shimmer {
+  background: linear-gradient(90deg, transparent, rgba(255,255,255,0.05), transparent);
+  background-size: 200% 100%;
+  animation: shimmer 2s infinite;
+}
+
+.animate-countdown-urgency {
+  animation: countdown-urgency 0.5s ease-in-out infinite;
+}
+
+.animate-float {
+  animation: float 3s ease-in-out infinite;
+}
+
+/* === Staggered List Animations === */
+.stagger-list > * {
+  opacity: 0;
+  animation: fadeInUp 0.4s ease forwards;
+}
+
+.stagger-list > *:nth-child(1) { animation-delay: 0ms; }
+.stagger-list > *:nth-child(2) { animation-delay: 60ms; }
+.stagger-list > *:nth-child(3) { animation-delay: 120ms; }
+.stagger-list > *:nth-child(4) { animation-delay: 180ms; }
+.stagger-list > *:nth-child(5) { animation-delay: 240ms; }
+.stagger-list > *:nth-child(6) { animation-delay: 300ms; }
+.stagger-list > *:nth-child(7) { animation-delay: 360ms; }
+.stagger-list > *:nth-child(8) { animation-delay: 420ms; }
+.stagger-list > *:nth-child(9) { animation-delay: 480ms; }
+.stagger-list > *:nth-child(10) { animation-delay: 540ms; }
+.stagger-list > *:nth-child(n+11) { animation-delay: 600ms; }
+
+/* === Glow Utility Classes === */
+.glow-red {
+  box-shadow: var(--glow-red);
+}
+
+.glow-red-strong {
+  box-shadow: var(--glow-red-strong);
+}
+
+.glow-gold {
+  box-shadow: var(--glow-gold);
+}
+
+.glow-gold-strong {
+  box-shadow: var(--glow-gold-strong);
+}
+
+.glow-teal {
+  box-shadow: var(--glow-teal);
+}
+
+/* === Background Patterns === */
+.bg-grid-pattern {
+  background-image:
+    linear-gradient(rgba(255, 70, 85, 0.03) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(255, 70, 85, 0.03) 1px, transparent 1px);
+  background-size: 40px 40px;
+}
+
+.bg-radial-glow {
+  background: radial-gradient(ellipse at center, rgba(255, 70, 85, 0.08) 0%, transparent 70%);
+}
+
+.bg-atmospheric {
+  background:
+    radial-gradient(ellipse at 20% 50%, rgba(255, 70, 85, 0.06) 0%, transparent 50%),
+    radial-gradient(ellipse at 80% 20%, rgba(45, 212, 191, 0.04) 0%, transparent 50%),
+    radial-gradient(ellipse at 50% 100%, rgba(245, 197, 66, 0.03) 0%, transparent 50%);
+}
+
+/* === Focus Styles === */
+*:focus-visible {
+  outline: 2px solid var(--accent-red);
+  outline-offset: 2px;
+}
+
+/* === Transition Defaults === */
+a, button, input, select, textarea {
+  transition: all 150ms ease;
+}
+
+/* === Input Resets for Dark Theme === */
+input:-webkit-autofill,
+input:-webkit-autofill:hover,
+input:-webkit-autofill:focus {
+  -webkit-box-shadow: 0 0 0px 1000px var(--bg-secondary) inset;
+  -webkit-text-fill-color: var(--text-primary);
+  caret-color: var(--text-primary);
+}

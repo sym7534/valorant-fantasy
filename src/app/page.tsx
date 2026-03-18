@@ -75,14 +75,23 @@ export default function LandingPage(): React.ReactElement {
             Draft real Valorant Champions Tour professionals, set weekly lineups, and compete with friends in the ultimate fantasy esports experience.
           </p>
 
-          <Button
-            variant="primary"
-            size="lg"
-            className="text-lg px-10 py-4"
-            onClick={() => signIn('google', { callbackUrl: '/dashboard' })}
-          >
-            Sign In with Google
-          </Button>
+          <div className="flex flex-col items-center gap-3">
+            <Button
+              variant="primary"
+              size="lg"
+              className="text-lg px-10 py-4"
+              onClick={() => signIn('google', { callbackUrl: '/dashboard' })}
+            >
+              Sign In with Google
+            </Button>
+            <button
+              type="button"
+              className="text-xs text-[var(--text-muted)] hover:text-[var(--text-secondary)] underline"
+              onClick={() => signIn('dev-login', { email: 'ryan.muxiwang@gmail.com', callbackUrl: '/dashboard' })}
+            >
+              Dev: Sign in as Ryan
+            </button>
+          </div>
         </div>
       </section>
 

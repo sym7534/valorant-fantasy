@@ -131,7 +131,7 @@ export default function PlayerStatsTable({
                   style={{ animationDelay: `${Math.min(i * 30, 300)}ms` }}
                 >
                   <td className="px-2 py-2">
-                    <RoleIcon role={player.role as PlayerRole} size="sm" />
+                    <RoleIcon role={(player.roles as PlayerRole[])[0]} size="sm" />
                   </td>
                   <td className="px-2 py-2">
                     <RegionFlag region={player.region as Region} size="sm" />

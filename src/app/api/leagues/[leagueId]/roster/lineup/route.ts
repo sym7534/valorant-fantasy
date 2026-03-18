@@ -3,7 +3,7 @@ import { auth } from '@/src/lib/auth';
 import { prisma } from '@/src/lib/prisma';
 import { ACTIVE_LINEUP_SIZE } from '@/src/lib/game-config';
 import type { RosterLineupRequest, RosterLineupResponse } from '@/src/lib/api-types';
-import { buildRosterResponse, ensureLeagueWeek } from '@/src/server/roster-service';
+import { buildRosterResponse, checkAndAutoLockWeek, ensureLeagueWeek } from '@/src/server/roster-service';
 import { saveLeagueWeekScores } from '@/src/server/scoring-engine';
 
 export async function PUT(
@@ -72,6 +72,7 @@ export async function PUT(
     }
 
     await ensureLeagueWeek(leagueId, weekNumber);
+    await checkAndAutoLockWeek(leagueId, weekNumber);
 
     const [leagueWeek, roster] = await Promise.all([
       prisma.leagueWeek.findUniqueOrThrow({
@@ -87,7 +88,16 @@ export async function PUT(
           leagueMemberId: membership.id,
         },
         include: {
-          rosterPlayers: true,
+          rosterPlayers: {
+            include: {
+              player: {
+                select: {
+                  id: true,
+                  name: true,
+                },
+              },
+            },
+          },
         },
       }),
     ]);
@@ -105,9 +115,16 @@ export async function PUT(
     );
 
     for (const playerId of playerIds) {
-      if (!rosterPlayerByPlayerId.has(playerId)) {
+      const rosterPlayer = rosterPlayerByPlayerId.get(playerId);
+      if (!rosterPlayer) {
         return NextResponse.json(
           { error: `Player ${playerId} is not on your roster` },
+          { status: 400 }
+        );
+      }
+      if (rosterPlayer.starBannedUntilWeek && rosterPlayer.starBannedUntilWeek > weekNumber) {
+        return NextResponse.json(
+          { error: `${rosterPlayer.player.name} is banned from your roster until week ${rosterPlayer.starBannedUntilWeek}` },
           { status: 400 }
         );
       }
@@ -186,7 +203,7 @@ export async function PUT(
                       name: true,
                       team: true,
                       region: true,
-                      role: true,
+                      roles: true,
                       imageUrl: true,
                     },
                   },

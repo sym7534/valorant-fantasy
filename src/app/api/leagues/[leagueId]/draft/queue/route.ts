@@ -49,7 +49,7 @@ export async function GET(
             name: true,
             team: true,
             region: true,
-            role: true,
+            roles: true,
             imageUrl: true,
           },
         },
@@ -111,7 +111,7 @@ export async function PUT(
         name: true,
         team: true,
         region: true,
-        role: true,
+        roles: true,
         imageUrl: true,
       },
       orderBy: {

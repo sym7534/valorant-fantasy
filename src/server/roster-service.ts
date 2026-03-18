@@ -15,19 +15,121 @@ export async function ensureLeagueWeek(
   leagueId: string,
   weekNumber: number
 ): Promise<void> {
-  await prisma.leagueWeek.upsert({
+  const existing = await prisma.leagueWeek.findUnique({
+    where: {
+      leagueId_weekNumber: { leagueId, weekNumber },
+    },
+  });
+
+  if (existing) return;
+
+  // Fetch league lock settings to compute deadline
+  const league = await prisma.league.findUnique({
+    where: { id: leagueId },
+    select: { lineupLockDay: true, lineupLockHour: true },
+  });
+
+  const deadline = league
+    ? computeLineupDeadline(league.lineupLockDay, league.lineupLockHour, weekNumber)
+    : null;
+
+  await prisma.leagueWeek.create({
+    data: {
+      leagueId,
+      weekNumber,
+      lineupDeadline: deadline,
+    },
+  });
+}
+
+/**
+ * Computes the next lineup deadline for a given week based on the league's
+ * configured lock day (0=Sun..6=Sat) and hour (0-23, UTC).
+ * Returns null if the league has no lock day/hour configured.
+ */
+export function computeLineupDeadline(
+  lockDay: number | null,
+  lockHour: number | null,
+  weekNumber: number
+): Date | null {
+  if (lockDay === null || lockDay === undefined || lockHour === null || lockHour === undefined) {
+    return null;
+  }
+
+  // Use current date as baseline, then find the next occurrence of lockDay
+  // For week 1 it's the closest upcoming lockDay; for subsequent weeks, add 7 days per week offset
+  const now = new Date();
+  const currentDay = now.getUTCDay();
+  let daysUntilLockDay = (lockDay - currentDay + 7) % 7;
+  if (daysUntilLockDay === 0) {
+    // If today is the lock day, check if the hour has passed
+    if (now.getUTCHours() >= lockHour) {
+      daysUntilLockDay = 7;
+    }
+  }
+
+  const deadline = new Date(now);
+  deadline.setUTCDate(deadline.getUTCDate() + daysUntilLockDay);
+  deadline.setUTCHours(lockHour, 0, 0, 0);
+
+  // For weeks beyond 1, offset by (weekNumber - 1) * 7 days from the base
+  // This is a simplified approach — in production you'd tie to actual match dates
+  if (weekNumber > 1) {
+    deadline.setUTCDate(deadline.getUTCDate() + (weekNumber - 1) * 7);
+  }
+
+  return deadline;
+}
+
+/**
+ * Checks if the lineup deadline has passed for a given league week.
+ * If so, auto-locks the week and all lineups for that week.
+ * This is a lazy evaluation pattern — called on every roster API request.
+ */
+export async function checkAndAutoLockWeek(
+  leagueId: string,
+  weekNumber: number
+): Promise<boolean> {
+  const leagueWeek = await prisma.leagueWeek.findUnique({
     where: {
       leagueId_weekNumber: {
         leagueId,
         weekNumber,
       },
     },
-    create: {
-      leagueId,
-      weekNumber,
-    },
-    update: {},
   });
+
+  if (!leagueWeek || leagueWeek.isLineupLocked) {
+    return leagueWeek?.isLineupLocked ?? false;
+  }
+
+  if (!leagueWeek.lineupDeadline) {
+    return false;
+  }
+
+  if (new Date() < leagueWeek.lineupDeadline) {
+    return false;
+  }
+
+  // Deadline has passed — lock the week
+  await prisma.$transaction(async (tx) => {
+    await tx.leagueWeek.update({
+      where: { id: leagueWeek.id },
+      data: { isLineupLocked: true },
+    });
+
+    await tx.weeklyLineup.updateMany({
+      where: {
+        roster: {
+          leagueId,
+        },
+        weekNumber,
+      },
+      data: { isLocked: true },
+    });
+  });
+
+  return true;
 }
 
 function getCooldownWeeksLeft(
@@ -98,7 +200,7 @@ export async function buildRosterResponse(
                 name: true,
                 team: true,
                 region: true,
-                role: true,
+                roles: true,
                 imageUrl: true,
               },
             },
@@ -123,7 +225,7 @@ export async function buildRosterResponse(
                         name: true,
                         team: true,
                         region: true,
-                        role: true,
+                        roles: true,
                         imageUrl: true,
                       },
                     },
@@ -231,6 +333,7 @@ export async function buildRosterResponse(
           selectedWeek,
           lastStarredWeekByRosterPlayer.get(rosterPlayer.id)
         ),
+        starBannedUntilWeek: rosterPlayer.starBannedUntilWeek,
         weeklyPoints: pointsByPlayerId.get(rosterPlayer.playerId) ?? null,
       };
     }),

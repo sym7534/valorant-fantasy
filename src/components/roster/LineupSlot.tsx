@@ -12,7 +12,7 @@ type LineupPlayer = {
     name: string;
     team: string;
     region: 'Americas' | 'Pacific' | 'EMEA' | 'China';
-    role: 'Duelist' | 'Initiator' | 'Controller' | 'Sentinel';
+    roles: ('Duelist' | 'Initiator' | 'Controller' | 'Sentinel')[];
     imageUrl?: string | null;
   };
   isCaptain: boolean;

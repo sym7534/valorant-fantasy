@@ -16,7 +16,7 @@ const playerSummarySelect = {
   name: true,
   team: true,
   region: true,
-  role: true,
+  roles: true,
   imageUrl: true,
 } satisfies Prisma.PlayerSelect;
 

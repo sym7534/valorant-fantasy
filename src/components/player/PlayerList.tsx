@@ -37,7 +37,7 @@ export default function PlayerList({
       if (search && !p.name.toLowerCase().includes(search.toLowerCase()) && !p.team.toLowerCase().includes(search.toLowerCase())) {
         return false;
       }
-      if (roleFilter !== 'all' && p.role !== roleFilter) return false;
+      if (roleFilter !== 'all' && !p.roles.includes(roleFilter)) return false;
       if (regionFilter !== 'all' && p.region !== regionFilter) return false;
       return true;
     });

@@ -27,12 +27,29 @@ export default function CreateLeagueForm({
   const [name, setName] = useState('');
   const [draftPickTime, setDraftPickTime] = useState(String(DEFAULT_DRAFT_TIMER));
   const [rosterSize, setRosterSize] = useState(String(DEFAULT_ROSTER_SIZE));
+  const [lineupLockDay, setLineupLockDay] = useState('2');
+  const [lineupLockHour, setLineupLockHour] = useState('18');
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   const timerOptions = DRAFT_TIMER_OPTIONS.map((seconds) => ({
     label: seconds >= 60 ? `${seconds / 60}m` : `${seconds}s`,
     value: String(seconds),
+  }));
+
+  const dayOptions = [
+    { label: 'Sunday', value: '0' },
+    { label: 'Monday', value: '1' },
+    { label: 'Tuesday', value: '2' },
+    { label: 'Wednesday', value: '3' },
+    { label: 'Thursday', value: '4' },
+    { label: 'Friday', value: '5' },
+    { label: 'Saturday', value: '6' },
+  ];
+
+  const hourOptions = Array.from({ length: 24 }, (_, index) => ({
+    label: `${index.toString().padStart(2, '0')}:00 UTC`,
+    value: String(index),
   }));
 
   const rosterOptions = Array.from(
@@ -64,6 +81,8 @@ export default function CreateLeagueForm({
           name: name.trim(),
           rosterSize: Number(rosterSize),
           draftPickTime: Number(draftPickTime),
+          lineupLockDay: Number(lineupLockDay),
+          lineupLockHour: Number(lineupLockHour),
         }),
       });
       const data = (await response.json()) as { league?: { id: string }; error?: string };
@@ -105,6 +124,21 @@ export default function CreateLeagueForm({
         value={draftPickTime}
         onChange={setDraftPickTime}
       />
+
+      <div className="grid grid-cols-2 gap-4">
+        <Select
+          label="Lineup Lock Day"
+          options={dayOptions}
+          value={lineupLockDay}
+          onChange={setLineupLockDay}
+        />
+        <Select
+          label="Lock Time (UTC)"
+          options={hourOptions}
+          value={lineupLockHour}
+          onChange={setLineupLockHour}
+        />
+      </div>
 
       <Card className="p-4">
         <h4 className="text-xs font-bold font-[family-name:var(--font-display)] uppercase tracking-wider text-[var(--text-secondary)] mb-3">

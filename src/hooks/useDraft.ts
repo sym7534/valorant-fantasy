@@ -104,6 +104,12 @@ export function useDraft(leagueId: string, userId: string): UseDraftReturn {
       const elapsed = Math.floor((Date.now() - lastServerTimeRef.current.fetchedAt) / 1000);
       const remaining = Math.max(0, lastServerTimeRef.current.timeRemaining - elapsed);
       setSecondsRemaining(remaining);
+
+      // When timer hits 0, immediately poll to trigger server-side auto-resolution
+      if (remaining === 0 && lastServerTimeRef.current.timeRemaining > 0) {
+        lastServerTimeRef.current.timeRemaining = 0; // Prevent repeated triggers
+        void refresh();
+      }
     }, 1000);
 
     return () => {

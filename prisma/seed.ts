@@ -219,7 +219,7 @@ async function seedPlayers(): Promise<Map<string, string>> {
     name: string;
     team: string;
     region: Region;
-    role: PlayerRole;
+    roles: PlayerRole[];
   }> = [];
 
   (Object.keys(PLAYER_NAMES_BY_REGION) as Region[]).forEach((region) => {
@@ -227,11 +227,19 @@ async function seedPlayers(): Promise<Map<string, string>> {
     const names = PLAYER_NAMES_BY_REGION[region];
 
     names.forEach((name, index) => {
+      const primaryRole = assignRole(index);
+      // ~20% of players get a secondary role for multi-role support
+      const secondaryRoles: PlayerRole[] = [];
+      if (index % 5 === 0) {
+        const allRoles: PlayerRole[] = ['Duelist', 'Initiator', 'Controller', 'Sentinel'];
+        const others = allRoles.filter((r) => r !== primaryRole);
+        secondaryRoles.push(others[index % others.length]);
+      }
       playerRecords.push({
         name,
         team: teams[index % teams.length],
         region,
-        role: assignRole(index),
+        roles: [primaryRole, ...secondaryRoles],
       });
     });
   });
@@ -359,7 +367,7 @@ async function upsertTestUsers(): Promise<Array<{ id: string; name: string | nul
   return users;
 }
 
-function determineSlotType(rosterSize: number, role: PlayerRole, existingSlotTypes: SlotType[]): SlotType {
+function determineSlotType(rosterSize: number, roles: PlayerRole[], existingSlotTypes: SlotType[]): SlotType {
   const slotConfig = ROLE_SLOTS_BY_ROSTER_SIZE[rosterSize];
   const filledCounts = existingSlotTypes.reduce<Record<SlotType, number>>(
     (counts, slotType) => {
@@ -375,8 +383,10 @@ function determineSlotType(rosterSize: number, role: PlayerRole, existingSlotTyp
     }
   );
 
-  if (filledCounts[role] < slotConfig[role]) {
-    return role;
+  for (const role of roles) {
+    if (filledCounts[role] < slotConfig[role]) {
+      return role;
+    }
   }
 
   if (filledCounts.Wildcard < slotConfig.Wildcard) {
@@ -449,7 +459,7 @@ async function createActiveLeague(
     },
     select: {
       id: true,
-      role: true,
+      roles: true,
     },
   });
   const playerById = new Map(selectedPlayers.map((player) => [player.id, player]));
@@ -537,7 +547,7 @@ async function createActiveLeague(
         throw new Error('Failed to build active league draft state.');
       }
 
-      const slotType = determineSlotType(ACTIVE_LEAGUE_ROSTER_SIZE, player.role, roster.slotTypes);
+      const slotType = determineSlotType(ACTIVE_LEAGUE_ROSTER_SIZE, player.roles as PlayerRole[], roster.slotTypes);
       const isCaptain = round === 1;
 
       await prisma.draftPick.create({

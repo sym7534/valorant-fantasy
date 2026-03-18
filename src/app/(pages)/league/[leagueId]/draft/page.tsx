@@ -9,7 +9,8 @@ import Input from '@/src/components/ui/Input';
 import Spinner from '@/src/components/ui/Spinner';
 import Avatar from '@/src/components/ui/Avatar';
 import RoleIcon from '@/src/components/player/RoleIcon';
-import RegionFlag from '@/src/components/player/RegionFlag';
+import RegionFlag, { regionBgTint } from '@/src/components/player/RegionFlag';
+import { CrownIcon } from '@/src/components/player/PlayerCard';
 import { useDraft } from '@/src/hooks/useDraft';
 import { useAuth } from '@/src/hooks/useAuth';
 import {
@@ -21,13 +22,11 @@ import {
 import type { DraftPickEntry, PlayerSummary } from '@/src/lib/api-types';
 
 function getDraftCellUserId(
-  round: number,
+  _round: number,
   memberIndex: number,
   draftOrder: string[]
 ): string {
-  return round % 2 === 0
-    ? draftOrder[draftOrder.length - 1 - memberIndex]
-    : draftOrder[memberIndex];
+  return draftOrder[memberIndex];
 }
 
 function getPlayerForPick(
@@ -55,7 +54,7 @@ export default function DraftPage(): React.ReactElement {
     updateQueue,
   } = useDraft(leagueId, user?.id ?? '');
   const [search, setSearch] = useState('');
-  const [roleFilter, setRoleFilter] = useState<'all' | PlayerSummary['role']>('all');
+  const [roleFilter, setRoleFilter] = useState<'all' | PlayerSummary['roles'][number]>('all');
   const [regionFilter, setRegionFilter] = useState<'all' | PlayerSummary['region']>('all');
   const [actionError, setActionError] = useState<string | null>(null);
   const [isSubmittingPick, setIsSubmittingPick] = useState(false);
@@ -86,7 +85,7 @@ export default function DraftPage(): React.ReactElement {
         }
       }
 
-      if (roleFilter !== 'all' && player.role !== roleFilter) {
+      if (roleFilter !== 'all' && !player.roles.includes(roleFilter)) {
         return false;
       }
 
@@ -269,11 +268,11 @@ export default function DraftPage(): React.ReactElement {
                             <div key={`${slotType}-${index}`} className="px-3 py-2 bg-[var(--bg-primary)] border border-[var(--border-subtle)] clip-angular-sm">
                               {pick ? (
                                 <div className="flex items-center gap-2">
-                                  <RoleIcon role={pick.player.role} size="sm" />
+                                  <RoleIcon role={pick.player.roles[0]} size="sm" />
                                   <span className="flex-1 text-sm font-semibold text-[var(--text-primary)] truncate">
                                     {pick.player.name}
                                   </span>
-                                  {pick.isCaptain && <Badge variant="gold" size="sm">CPT</Badge>}
+                                  {pick.isCaptain && <CrownIcon size={14} />}
                                 </div>
                               ) : (
                                 <span className="text-xs text-[var(--text-muted)]">Open slot</span>
@@ -352,7 +351,7 @@ export default function DraftPage(): React.ReactElement {
                               {pick ? (
                                 <div className="space-y-1">
                                   <div className="flex items-center gap-2">
-                                    <RoleIcon role={pick.player.role} size="sm" />
+                                    <RoleIcon role={pick.player.roles[0]} size="sm" />
                                     <span className="text-sm font-semibold text-[var(--text-primary)] truncate">
                                       {pick.player.name}
                                     </span>
@@ -362,7 +361,7 @@ export default function DraftPage(): React.ReactElement {
                                   </p>
                                   <div className="flex items-center gap-2">
                                     <RegionFlag region={pick.player.region} size="sm" />
-                                    {pick.isCaptain && <Badge variant="gold" size="sm">CPT</Badge>}
+                                    {pick.isCaptain && <CrownIcon size={14} />}
                                   </div>
                                 </div>
                               ) : (
@@ -429,7 +428,7 @@ export default function DraftPage(): React.ReactElement {
                       <span className="w-5 text-xs font-bold font-[family-name:var(--font-display)] text-[var(--accent-gold)]">
                         {index + 1}
                       </span>
-                      <RoleIcon role={entry.player.role} size="sm" />
+                      <RoleIcon role={entry.player.roles[0]} size="sm" />
                       <span className="flex-1 text-sm text-[var(--text-primary)] truncate">
                         {entry.player.name}
                       </span>
@@ -500,7 +499,7 @@ export default function DraftPage(): React.ReactElement {
                     key={role}
                     type="button"
                     className={`px-2 py-1 text-[10px] font-bold uppercase tracking-wider rounded-sm ${roleFilter === role ? 'bg-[var(--accent-red)] text-[var(--text-on-accent)]' : 'bg-[var(--bg-primary)] text-[var(--text-secondary)]'}`}
-                    onClick={() => setRoleFilter((current) => (current === role ? 'all' : role))}
+                    onClick={() => setRoleFilter((current: typeof roleFilter) => (current === role ? 'all' : role))}
                   >
                     {role}
                   </button>
@@ -533,11 +532,11 @@ export default function DraftPage(): React.ReactElement {
                 const isQueued = queueIds.includes(player.id);
 
                 return (
-                  <div key={player.id} className={`px-3 py-3 bg-[var(--bg-primary)] border clip-angular-sm ${isDrafted ? 'border-[var(--border-subtle)] opacity-50' : 'border-[var(--border-default)]'}`}>
+                  <div key={player.id} className={`px-3 py-3 border clip-angular-sm ${isDrafted ? 'border-[var(--border-subtle)] opacity-50' : 'border-[var(--border-default)]'}`} style={{ backgroundColor: isDrafted ? 'var(--bg-primary)' : regionBgTint[player.region] }}>
                     <div className="flex items-start justify-between gap-3">
                       <div className="min-w-0">
                         <div className="flex items-center gap-2">
-                          <RoleIcon role={player.role} size="sm" />
+                          <RoleIcon role={player.roles[0]} size="sm" />
                           <span className="text-sm font-semibold text-[var(--text-primary)] truncate">
                             {player.name}
                           </span>
@@ -545,7 +544,7 @@ export default function DraftPage(): React.ReactElement {
                         <p className="text-xs text-[var(--text-secondary)] mt-1">{player.team}</p>
                         <div className="flex items-center gap-2 mt-2">
                           <RegionFlag region={player.region} size="sm" />
-                          <Badge variant="muted" size="sm">{player.role}</Badge>
+                          <Badge variant="muted" size="sm">{player.roles.length > 1 ? player.roles.map((r: string) => r[0]).join('/') : player.roles[0]}</Badge>
                           {isDrafted && <Badge variant="warning" size="sm">Drafted</Badge>}
                           {isQueued && !isDrafted && <Badge variant="teal" size="sm">Queued</Badge>}
                         </div>

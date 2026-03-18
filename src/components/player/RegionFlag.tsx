@@ -1,6 +1,5 @@
 import React from 'react';
-// TEMPORARY — replace with import from @/src/lib/game-config when available
-type Region = 'Americas' | 'Pacific' | 'EMEA' | 'China';
+import type { Region } from '@/src/lib/game-config';
 
 interface RegionFlagProps {
   region: Region;
@@ -16,11 +15,18 @@ const regionAbbrev: Record<Region, string> = {
   China: 'CN',
 };
 
-const regionColors: Record<Region, string> = {
+export const regionColors: Record<Region, string> = {
   Americas: '#ff4655',
-  Pacific: '#2dd4bf',
-  EMEA: '#a78bfa',
-  China: '#fbbf24',
+  Pacific: '#3b82f6',
+  EMEA: '#4ade80',
+  China: '#a78bfa',
+};
+
+export const regionBgTint: Record<Region, string> = {
+  Americas: 'rgba(255, 70, 85, 0.08)',
+  Pacific: 'rgba(59, 130, 246, 0.08)',
+  EMEA: 'rgba(74, 222, 128, 0.08)',
+  China: 'rgba(167, 139, 250, 0.08)',
 };
 
 export default function RegionFlag({
@@ -29,17 +35,17 @@ export default function RegionFlag({
   showLabel = false,
   className = '',
 }: RegionFlagProps): React.ReactElement {
-  const s = size === 'sm' ? 'w-5 h-5 text-[9px]' : 'w-6 h-6 text-[10px]';
+  const s = size === 'sm' ? 'text-[9px] px-1 py-0.5' : 'text-[10px] px-1.5 py-0.5';
 
   return (
     <div className={`inline-flex items-center gap-1.5 ${className}`}>
-      <div
-        className={`${s} rounded-sm flex items-center justify-center font-bold font-[family-name:var(--font-display)]`}
+      <span
+        className={`${s} rounded-sm font-bold font-[family-name:var(--font-display)] uppercase tracking-wider leading-none`}
         style={{ backgroundColor: `${regionColors[region]}20`, color: regionColors[region] }}
         title={region}
       >
-        {regionAbbrev[region].charAt(0)}
-      </div>
+        {regionAbbrev[region]}
+      </span>
       {showLabel && (
         <span className="text-xs text-[var(--text-secondary)]">{region}</span>
       )}

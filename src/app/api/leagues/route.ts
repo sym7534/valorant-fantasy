@@ -253,6 +253,13 @@ export async function POST(
       );
     }
 
+    const lineupLockDay = body.lineupLockDay !== undefined && body.lineupLockDay !== null
+      ? Math.min(6, Math.max(0, Math.floor(body.lineupLockDay)))
+      : 2;
+    const lineupLockHour = body.lineupLockHour !== undefined && body.lineupLockHour !== null
+      ? Math.min(23, Math.max(0, Math.floor(body.lineupLockHour)))
+      : 18;
+
     const inviteCode = await generateUniqueInviteCode();
 
     const createdLeague = await prisma.$transaction(async (tx) => {
@@ -263,6 +270,8 @@ export async function POST(
           creatorId: userId,
           rosterSize: body.rosterSize,
           draftPickTime,
+          lineupLockDay,
+          lineupLockHour,
         },
       });
 

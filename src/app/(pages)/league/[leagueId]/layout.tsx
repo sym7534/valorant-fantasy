@@ -28,7 +28,7 @@ export default async function LeagueLayout({
 
   return (
     <div className="min-h-[calc(100vh-64px)] flex">
-      <Sidebar leagueId={leagueId} leagueName={league.name} />
+      <Sidebar leagueId={leagueId} leagueName={league.name} leagueStatus={league.status} />
       <main className="flex-1 min-w-0">{children}</main>
     </div>
   );

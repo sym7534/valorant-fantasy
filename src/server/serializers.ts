@@ -23,7 +23,7 @@ import type {
 } from '@/src/lib/api-types';
 
 type UserSummarySource = Pick<User, 'id' | 'name' | 'image'>;
-type PlayerSummarySource = Pick<Player, 'id' | 'name' | 'team' | 'region' | 'role' | 'imageUrl'>;
+type PlayerSummarySource = Pick<Player, 'id' | 'name' | 'team' | 'region' | 'roles' | 'imageUrl'>;
 
 export type DraftPickWithRelations = DraftPick & {
   user: UserSummarySource;
@@ -66,7 +66,7 @@ export function toPlayerSummary(player: PlayerSummarySource): PlayerSummary {
     name: player.name,
     team: player.team,
     region: player.region,
-    role: player.role,
+    roles: player.roles,
     imageUrl: player.imageUrl,
   };
 }
@@ -137,6 +137,7 @@ export function buildLeagueWeekSummaries(
       weekNumber: week.weekNumber,
       isCurrent: week.weekNumber === currentWeek,
       isLineupLocked: week.isLineupLocked,
+      lineupDeadline: week.lineupDeadline?.toISOString() ?? null,
       totalPoints: totalPointsByWeek?.get(week.weekNumber) ?? null,
     }));
 }

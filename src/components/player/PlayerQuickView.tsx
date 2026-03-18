@@ -36,7 +36,7 @@ export default function PlayerQuickView({
         {/* Player header */}
         <div className="flex items-center gap-4">
           <div className="w-16 h-16 bg-[var(--bg-tertiary)] clip-angular flex items-center justify-center">
-            <RoleIcon role={player.role as PlayerRole} size="md" />
+            <RoleIcon role={(player.roles as PlayerRole[])[0]} size="md" />
           </div>
           <div>
             <h3 className="text-xl font-bold font-[family-name:var(--font-display)] uppercase tracking-wide text-[var(--text-primary)]">
@@ -45,7 +45,7 @@ export default function PlayerQuickView({
             <div className="flex items-center gap-2 mt-1">
               <span className="text-sm text-[var(--text-secondary)]">{player.team}</span>
               <RegionFlag region={player.region as Region} size="sm" />
-              <Badge variant="default" size="sm">{player.role}</Badge>
+              <Badge variant="default" size="sm">{(player.roles as PlayerRole[]).length > 1 ? (player.roles as PlayerRole[]).map((r: string) => r[0]).join('/') : player.roles[0]}</Badge>
             </div>
           </div>
         </div>

@@ -40,7 +40,7 @@ const leagueDetailInclude = {
               name: true,
               team: true,
               region: true,
-              role: true,
+              roles: true,
               imageUrl: true,
             },
           },

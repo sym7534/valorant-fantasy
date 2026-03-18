@@ -3,7 +3,7 @@ import { auth } from '@/src/lib/auth';
 import { prisma } from '@/src/lib/prisma';
 import { STAR_PLAYER_COOLDOWN_WEEKS } from '@/src/lib/game-config';
 import type { RosterStarRequest, RosterStarResponse } from '@/src/lib/api-types';
-import { buildRosterResponse, ensureLeagueWeek } from '@/src/server/roster-service';
+import { buildRosterResponse, checkAndAutoLockWeek, ensureLeagueWeek } from '@/src/server/roster-service';
 import { saveLeagueWeekScores } from '@/src/server/scoring-engine';
 
 export async function PUT(
@@ -64,6 +64,7 @@ export async function PUT(
     }
 
     await ensureLeagueWeek(leagueId, weekNumber);
+    await checkAndAutoLockWeek(leagueId, weekNumber);
 
     const [leagueWeek, roster] = await Promise.all([
       prisma.leagueWeek.findUniqueOrThrow({
@@ -87,7 +88,7 @@ export async function PUT(
                   name: true,
                   team: true,
                   region: true,
-                  role: true,
+                  roles: true,
                   imageUrl: true,
                 },
               },
@@ -115,6 +116,13 @@ export async function PUT(
 
     if (rosterPlayer.isCaptain) {
       return NextResponse.json({ error: 'Captains cannot be designated as Star Players' }, { status: 400 });
+    }
+
+    if (rosterPlayer.starBannedUntilWeek && rosterPlayer.starBannedUntilWeek > weekNumber) {
+      return NextResponse.json(
+        { error: `This player is banned from your roster until week ${rosterPlayer.starBannedUntilWeek}` },
+        { status: 400 }
+      );
     }
 
     const priorStar = await prisma.weeklyLineup.findFirst({
@@ -179,6 +187,8 @@ export async function PUT(
       );
     }
 
+    const banUntilWeek = weekNumber + STAR_PLAYER_COOLDOWN_WEEKS + 1;
+
     await prisma.$transaction(async (tx) => {
       await tx.lineupSlot.updateMany({
         where: {
@@ -196,6 +206,16 @@ export async function PUT(
         },
         data: {
           isStarPlayer: true,
+        },
+      });
+
+      // Ban the starred player from the roster for 2 weeks
+      await tx.rosterPlayer.update({
+        where: {
+          id: rosterPlayer.id,
+        },
+        data: {
+          starBannedUntilWeek: banUntilWeek,
         },
       });
     });

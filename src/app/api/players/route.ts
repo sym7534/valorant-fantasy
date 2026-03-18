@@ -30,7 +30,7 @@ export async function GET(
     }
 
     if (role && PLAYER_ROLES.includes(role as typeof PLAYER_ROLES[number])) {
-      where.role = role
+      where.roles = { has: role }
     }
 
     if (search && typeof search === 'string' && search.trim().length > 0) {
@@ -49,7 +49,7 @@ export async function GET(
           name: true,
           team: true,
           region: true,
-          role: true,
+          roles: true,
           imageUrl: true,
         },
         orderBy: { name: 'asc' },
@@ -63,7 +63,7 @@ export async function GET(
       name: p.name,
       team: p.team,
       region: p.region as PlayerSummary['region'],
-      role: p.role as PlayerSummary['role'],
+      roles: p.roles as PlayerSummary['roles'],
       imageUrl: p.imageUrl,
     }))
 

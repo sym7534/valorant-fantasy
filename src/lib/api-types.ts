@@ -35,7 +35,7 @@ export type PlayerSummary = {
   name: string;
   team: string;
   region: Region;
-  role: PlayerRole;
+  roles: PlayerRole[];
   imageUrl: string | null;
 };
 
@@ -75,6 +75,7 @@ export type LeagueWeekSummary = {
   weekNumber: number;
   isCurrent: boolean;
   isLineupLocked: boolean;
+  lineupDeadline: string | null;
   totalPoints: number | null;
 };
 
@@ -137,6 +138,8 @@ export type LeagueCreateRequest = {
   name: string;
   rosterSize: number;
   draftPickTime: number;
+  lineupLockDay?: number;
+  lineupLockHour?: number;
 };
 
 export type LeagueCreateResponse = {
@@ -209,6 +212,7 @@ export type RosterPlayerEntry = {
   isInActiveLineup: boolean;
   isStarPlayer: boolean;
   starCooldownWeeksLeft: number;
+  starBannedUntilWeek: number | null;
   weeklyPoints: number | null;
 };
 

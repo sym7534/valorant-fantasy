@@ -121,10 +121,12 @@ model League {
   inviteCode    String       @unique @db.VarChar(8)
   status        LeagueStatus @default(SETUP)
   creatorId     String
-  rosterSize    Int          @default(10)
-  draftPickTime Int          @default(60)
-  currentWeek   Int          @default(1)
-  archivedAt    DateTime?
+  rosterSize      Int          @default(10)
+  draftPickTime   Int          @default(60)
+  currentWeek     Int          @default(1)
+  lineupLockDay   Int?         @default(2)
+  lineupLockHour  Int?         @default(18)
+  archivedAt      DateTime?
   createdAt     DateTime     @default(now())
   updatedAt     DateTime     @updatedAt
 
@@ -166,7 +168,7 @@ model Player {
   name     String
   team     String
   region   Region
-  role     PlayerRole
+  roles    PlayerRole[]
   imageUrl String?
 
   matchStats       PlayerMatchStats[]
@@ -175,7 +177,6 @@ model Player {
   draftQueueEntries DraftQueueEntry[]
 
   @@index([region])
-  @@index([role])
   @@index([team])
   @@map("players")
 }
@@ -267,8 +268,9 @@ model RosterPlayer {
   id         String   @id @default(cuid())
   rosterId   String
   playerId   String
-  isCaptain  Boolean  @default(false)
-  slotType   SlotType
+  isCaptain          Boolean  @default(false)
+  slotType           SlotType
+  starBannedUntilWeek Int?
 
   roster      Roster       @relation(fields: [rosterId], references: [id], onDelete: Cascade)
   player      Player       @relation(fields: [playerId], references: [id])
@@ -285,8 +287,9 @@ model LeagueWeek {
   id             String   @id @default(cuid())
   leagueId       String
   weekNumber     Int
-  isLineupLocked Boolean  @default(false)
-  createdAt      DateTime @default(now())
+  isLineupLocked Boolean   @default(false)
+  lineupDeadline DateTime?
+  createdAt      DateTime  @default(now())
   updatedAt      DateTime @updatedAt
 
   league League @relation(fields: [leagueId], references: [id], onDelete: Cascade)

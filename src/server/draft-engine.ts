@@ -3,8 +3,11 @@ import { prisma } from '@/src/lib/prisma';
 import {
   CAPTAIN_ROUND,
   MIN_LEAGUE_SIZE,
+  REGION_MIN_PER,
+  REGIONS,
   ROLE_SLOTS_BY_ROSTER_SIZE,
 } from '@/src/lib/game-config';
+import type { Region } from '@/src/lib/game-config';
 import type { DraftPickEntry, DraftStateResponse } from '@/src/lib/api-types';
 import {
   buildDraftStateResponse,
@@ -22,7 +25,7 @@ const playerSummarySelect = {
   name: true,
   team: true,
   region: true,
-  role: true,
+  roles: true,
   imageUrl: true,
 } satisfies Prisma.PlayerSelect;
 
@@ -112,9 +115,9 @@ function getNextTurn(
 
 export function determineSlotType(
   rosterSize: number,
-  playerRole: PlayerRole,
+  playerRoles: PlayerRole[],
   existingSlotTypes: SlotType[]
-): SlotType {
+): SlotType | null {
   const slotConfig = ROLE_SLOTS_BY_ROSTER_SIZE[rosterSize];
   const filledCounts = existingSlotTypes.reduce<Record<SlotType, number>>(
     (counts, slotType) => {
@@ -130,21 +133,59 @@ export function determineSlotType(
     }
   );
 
-  if (filledCounts[playerRole] < slotConfig[playerRole]) {
-    return playerRole;
+  // Try each of the player's roles for a native slot fit
+  for (const role of playerRoles) {
+    if (filledCounts[role] < slotConfig[role]) {
+      return role;
+    }
   }
 
+  // Fall back to a wildcard slot
   if (filledCounts.Wildcard < slotConfig.Wildcard) {
     return 'Wildcard';
   }
 
-  for (const slotType of Object.keys(slotConfig) as SlotType[]) {
-    if (filledCounts[slotType] < slotConfig[slotType]) {
-      return slotType;
+  // No valid slot — reject this pick
+  return null;
+}
+
+/**
+ * Validates that a draft pick doesn't violate region minimum constraints.
+ * Checks whether, after this pick, it's still possible to reach the minimum
+ * 2 players per region with the remaining picks.
+ */
+export function validateRegionConstraint(
+  rosterSize: number,
+  candidateRegion: Region,
+  existingPicks: Array<{ region: Region }>
+): string | null {
+  const picksAfterThis = existingPicks.length + 1;
+  const remainingAfterThis = rosterSize - picksAfterThis;
+
+  // Count regions already drafted (including the candidate)
+  const regionCounts: Record<string, number> = {};
+  for (const r of REGIONS) {
+    regionCounts[r] = 0;
+  }
+  for (const pick of existingPicks) {
+    regionCounts[pick.region] += 1;
+  }
+  regionCounts[candidateRegion] += 1;
+
+  // How many more picks are needed to satisfy region minimums?
+  let slotsNeededForRegions = 0;
+  for (const r of REGIONS) {
+    const deficit = REGION_MIN_PER - regionCounts[r];
+    if (deficit > 0) {
+      slotsNeededForRegions += deficit;
     }
   }
 
-  return 'Wildcard';
+  if (slotsNeededForRegions > remainingAfterThis) {
+    return `Picking another ${candidateRegion} player would make it impossible to meet the minimum ${REGION_MIN_PER} players per region requirement`;
+  }
+
+  return null;
 }
 
 async function fetchHydratedDraftState(
@@ -334,10 +375,21 @@ export async function makeDraftPick(
     throw new Error('That player has already been drafted');
   }
 
-  const existingSlotTypes = draftState.picks
-    .filter((pick) => pick.userId === userId)
-    .map((pick) => pick.slotType);
-  const slotType = determineSlotType(league.rosterSize, player.role, existingSlotTypes);
+  const userPicks = draftState.picks.filter((pick) => pick.userId === userId);
+  const existingSlotTypes = userPicks.map((pick) => pick.slotType);
+  const playerRoles = player.roles as PlayerRole[];
+  const slotType = determineSlotType(league.rosterSize, playerRoles, existingSlotTypes);
+
+  if (slotType === null) {
+    throw new Error(`No available roster slot for ${playerRoles.join('/')}. Try picking a different role.`);
+  }
+
+  const existingRegionPicks = userPicks.map((pick) => ({ region: pick.player.region as Region }));
+  const regionError = validateRegionConstraint(league.rosterSize, player.region as Region, existingRegionPicks);
+  if (regionError) {
+    throw new Error(regionError);
+  }
+
   const pickNumber = getTurnNumber(
     draftState.currentRound,
     draftState.currentPickIndex,
@@ -435,7 +487,10 @@ async function findQueuedPlayerId(
   tx: Prisma.TransactionClient,
   leagueId: string,
   userId: string,
-  draftedPlayerIds: Set<string>
+  draftedPlayerIds: Set<string>,
+  rosterSize: number,
+  existingSlotTypes: SlotType[],
+  existingRegionPicks: Array<{ region: Region }>
 ): Promise<string | null> {
   const queueEntries = await tx.draftQueueEntry.findMany({
     where: {
@@ -453,9 +508,19 @@ async function findQueuedPlayerId(
   });
 
   for (const entry of queueEntries) {
-    if (!draftedPlayerIds.has(entry.playerId)) {
-      return entry.playerId;
-    }
+    if (draftedPlayerIds.has(entry.playerId)) continue;
+
+    const slotType = determineSlotType(rosterSize, entry.player.roles as PlayerRole[], existingSlotTypes);
+    if (slotType === null) continue;
+
+    const regionError = validateRegionConstraint(
+      rosterSize,
+      entry.player.region as Region,
+      existingRegionPicks
+    );
+    if (regionError) continue;
+
+    return entry.playerId;
   }
 
   return null;
@@ -539,8 +604,20 @@ export async function autoResolveDraftTurn(leagueId: string): Promise<DraftMutat
     draftState.currentPickIndex
   );
   const draftedPlayerIds = new Set(draftState.picks.map((pick) => pick.playerId));
+  const userPicks = draftState.picks.filter((pick) => pick.userId === currentPickerUserId);
+  const existingSlotTypes = userPicks.map((pick) => pick.slotType);
+  const existingRegionPicks = userPicks.map((pick) => ({ region: pick.player.region as Region }));
+
+  const league = await prisma.league.findUnique({ where: { id: leagueId } });
+  if (!league) {
+    throw new Error('League not found');
+  }
+
   const queuedPlayerId = await prisma.$transaction((tx) =>
-    findQueuedPlayerId(tx, leagueId, currentPickerUserId, draftedPlayerIds)
+    findQueuedPlayerId(
+      tx, leagueId, currentPickerUserId, draftedPlayerIds,
+      league.rosterSize, existingSlotTypes, existingRegionPicks
+    )
   );
 
   if (queuedPlayerId) {

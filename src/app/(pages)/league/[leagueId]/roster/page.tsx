@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { useParams } from 'next/navigation';
 import Badge from '@/src/components/ui/Badge';
 import Button from '@/src/components/ui/Button';
@@ -8,6 +8,7 @@ import Card from '@/src/components/ui/Card';
 import Spinner from '@/src/components/ui/Spinner';
 import RoleIcon from '@/src/components/player/RoleIcon';
 import RegionFlag from '@/src/components/player/RegionFlag';
+import { CrownIcon, StarIcon } from '@/src/components/player/PlayerCard';
 import { useRoster } from '@/src/hooks/useRoster';
 import { ACTIVE_LINEUP_SIZE } from '@/src/lib/game-config';
 
@@ -22,6 +23,43 @@ export default function RosterPage(): React.ReactElement {
   const [isSaving, setIsSaving] = useState(false);
   const [isActivatingStar, setIsActivatingStar] = useState(false);
   const { roster, loading, error, submitLineup, activateStar } = useRoster(leagueId, selectedWeek);
+  const [deadlineCountdown, setDeadlineCountdown] = useState<string | null>(null);
+
+  const currentWeekSummary = useMemo(() => {
+    if (!roster) return null;
+    return roster.weekSummaries.find((week) => week.weekNumber === roster.selectedWeek) ?? null;
+  }, [roster]);
+
+  const formatCountdown = useCallback((deadline: string): string | null => {
+    const diff = new Date(deadline).getTime() - Date.now();
+    if (diff <= 0) return null;
+
+    const hours = Math.floor(diff / (1000 * 60 * 60));
+    const minutes = Math.floor((diff % (1000 * 60 * 60)) / (1000 * 60));
+    const seconds = Math.floor((diff % (1000 * 60)) / 1000);
+
+    if (hours >= 24) {
+      const days = Math.floor(hours / 24);
+      return `${days}d ${hours % 24}h`;
+    }
+    return `${hours}h ${minutes}m ${seconds}s`;
+  }, []);
+
+  useEffect(() => {
+    const deadline = currentWeekSummary?.lineupDeadline;
+    if (!deadline) {
+      setDeadlineCountdown(null);
+      return;
+    }
+
+    const tick = (): void => {
+      setDeadlineCountdown(formatCountdown(deadline));
+    };
+
+    tick();
+    const interval = setInterval(tick, 1000);
+    return () => clearInterval(interval);
+  }, [currentWeekSummary?.lineupDeadline, formatCountdown]);
 
   useEffect(() => {
     if (roster && selectedWeek === undefined) {
@@ -61,7 +99,6 @@ export default function RosterPage(): React.ReactElement {
     return roster.players.filter((player) => !activeSet.has(player.playerId));
   }, [activePlayerIds, roster]);
 
-  const currentWeekSummary = roster?.weekSummaries.find((week) => week.weekNumber === roster.selectedWeek) ?? null;
   const isLocked = Boolean(currentWeekSummary?.isLineupLocked || roster?.activeLineup?.isLocked);
   const currentStarPlayerId =
     roster?.activeLineup?.slots.find((slot) => slot.isStarPlayer)?.player.id ?? null;
@@ -163,7 +200,12 @@ export default function RosterPage(): React.ReactElement {
             My Roster
           </h1>
           <p className="text-sm text-[var(--text-secondary)] mt-1">
-            {roster.leagueName}, week {roster.selectedWeek}. Manual admin lock is {isLocked ? 'active' : 'open'}.
+            {roster.leagueName}, week {roster.selectedWeek}.
+            {isLocked
+              ? ' Lineup locked.'
+              : deadlineCountdown
+                ? ` Lock in ${deadlineCountdown}`
+                : ' Lineup open.'}
           </p>
         </div>
 
@@ -225,23 +267,28 @@ export default function RosterPage(): React.ReactElement {
               .filter((player) => !player.isCaptain)
               .map((player) => {
                 const unavailable = player.starCooldownWeeksLeft > 0;
+                const isBanned = player.starBannedUntilWeek !== null && player.starBannedUntilWeek > roster.selectedWeek;
 
                 return (
-                  <div key={player.id} className="p-4 bg-[var(--bg-primary)] border border-[var(--border-subtle)] clip-angular-sm">
+                  <div key={player.id} className={`p-4 bg-[var(--bg-primary)] border border-[var(--border-subtle)] clip-angular-sm ${isBanned ? 'opacity-50' : ''}`}>
                     <div className="flex items-center gap-2 mb-2">
-                      <RoleIcon role={player.player.role} size="sm" />
+                      <RoleIcon role={player.player.roles[0]} size="sm" />
                       <span className="text-sm font-semibold text-[var(--text-primary)]">{player.player.name}</span>
                     </div>
                     <div className="flex items-center gap-2 mb-3">
                       <RegionFlag region={player.player.region} size="sm" />
-                      {currentStarPlayerId === player.playerId && <Badge variant="gold" size="sm">Current Star</Badge>}
+                      {currentStarPlayerId === player.playerId && <StarIcon size={14} />}
                       {unavailable && <Badge variant="warning" size="sm">Cooldown {player.starCooldownWeeksLeft}w</Badge>}
+                      {isBanned && <Badge variant="error" size="sm">Banned until W{player.starBannedUntilWeek}</Badge>}
                     </div>
+                    <p className="text-[10px] text-[var(--text-muted)] mb-2">
+                      Player will be removed from roster for 2 weeks after starring.
+                    </p>
                     <Button
                       variant="primary"
                       size="sm"
                       className="w-full"
-                      disabled={unavailable || currentStarPlayerId === player.playerId}
+                      disabled={unavailable || isBanned || currentStarPlayerId === player.playerId}
                       isLoading={isActivatingStar && currentStarPlayerId !== player.playerId}
                       onClick={() => void handleActivateStar(player.playerId)}
                     >
@@ -287,13 +334,13 @@ export default function RosterPage(): React.ReactElement {
                       <div className="flex items-center justify-between mb-3">
                         <RegionFlag region={player.player.region} size="sm" />
                         <div className="flex gap-2">
-                          {player.isCaptain && <Badge variant="gold" size="sm">Captain</Badge>}
-                          {currentStarPlayerId === player.playerId && <Badge variant="gold" size="sm">Star</Badge>}
+                          {player.isCaptain && <CrownIcon size={16} />}
+                          {currentStarPlayerId === player.playerId && <StarIcon size={16} />}
                         </div>
                       </div>
                       <div className="flex-1">
                         <div className="h-28 mb-4 bg-[var(--bg-tertiary)] clip-angular-sm flex items-center justify-center">
-                          <RoleIcon role={player.player.role} size="lg" />
+                          <RoleIcon role={player.player.roles[0]} size="lg" />
                         </div>
                         <h3 className="text-xl font-bold font-[family-name:var(--font-display)] uppercase tracking-wider text-[var(--text-primary)]">
                           {player.player.name}
@@ -302,7 +349,7 @@ export default function RosterPage(): React.ReactElement {
                         <div className="mt-4 grid grid-cols-2 gap-3 text-sm">
                           <div>
                             <p className="text-[10px] text-[var(--text-muted)] uppercase tracking-wider">Role</p>
-                            <p className="text-[var(--text-primary)]">{player.player.role}</p>
+                            <p className="text-[var(--text-primary)]">{player.player.roles[0]}</p>
                           </div>
                           <div>
                             <p className="text-[10px] text-[var(--text-muted)] uppercase tracking-wider">Points</p>
@@ -347,34 +394,43 @@ export default function RosterPage(): React.ReactElement {
           </Badge>
         </div>
         <div className="space-y-2">
-          {benchPlayers.map((player) => (
-            <div key={player.id} className="px-4 py-3 bg-[var(--bg-primary)] border border-[var(--border-subtle)] clip-angular-sm flex items-center gap-3">
-              <RoleIcon role={player.player.role} size="sm" />
-              <div className="flex-1 min-w-0">
-                <p className="text-sm font-semibold text-[var(--text-primary)] truncate">
-                  {player.player.name}
-                </p>
-                <p className="text-xs text-[var(--text-secondary)] truncate">
-                  {player.player.team}
-                </p>
+          {benchPlayers.map((player) => {
+            const isBanned = player.starBannedUntilWeek !== null && player.starBannedUntilWeek > roster.selectedWeek;
+
+            return (
+              <div key={player.id} className={`px-4 py-3 bg-[var(--bg-primary)] border border-[var(--border-subtle)] clip-angular-sm flex items-center gap-3 ${isBanned ? 'opacity-50' : ''}`}>
+                <RoleIcon role={player.player.roles[0]} size="sm" />
+                <div className="flex-1 min-w-0">
+                  <p className="text-sm font-semibold text-[var(--text-primary)] truncate">
+                    {player.player.name}
+                  </p>
+                  <p className="text-xs text-[var(--text-secondary)] truncate">
+                    {player.player.team}
+                  </p>
+                </div>
+                <RegionFlag region={player.player.region} size="sm" />
+                {isBanned && (
+                  <Badge variant="error" size="sm">
+                    Banned until W{player.starBannedUntilWeek}
+                  </Badge>
+                )}
+                {player.starCooldownWeeksLeft > 0 && !isBanned && (
+                  <Badge variant="warning" size="sm">
+                    CD {player.starCooldownWeeksLeft}w
+                  </Badge>
+                )}
+                <Badge variant="muted" size="sm">{player.slotType}</Badge>
+                <Button
+                  variant="secondary"
+                  size="sm"
+                  disabled={isLocked || isBanned}
+                  onClick={() => activatePlayer(player.playerId)}
+                >
+                  {isBanned ? 'Banned' : 'Start'}
+                </Button>
               </div>
-              <RegionFlag region={player.player.region} size="sm" />
-              {player.starCooldownWeeksLeft > 0 && (
-                <Badge variant="warning" size="sm">
-                  CD {player.starCooldownWeeksLeft}w
-                </Badge>
-              )}
-              <Badge variant="muted" size="sm">{player.slotType}</Badge>
-              <Button
-                variant="secondary"
-                size="sm"
-                disabled={isLocked}
-                onClick={() => activatePlayer(player.playerId)}
-              >
-                Start
-              </Button>
-            </div>
-          ))}
+            );
+          })}
         </div>
       </Card>
 

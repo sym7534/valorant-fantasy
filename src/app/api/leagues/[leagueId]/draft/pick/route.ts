@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { auth } from '@/src/lib/auth';
 import type { DraftPickRequest, DraftPickResponse } from '@/src/lib/api-types';
 import { makeDraftPick } from '@/src/server/draft-engine';
-import { broadcastDraftMutation } from '@/src/server/socket';
+import { resolveExpiredDraftTurns } from '@/src/server/draft-timer';
 
 function getStatusForDraftError(message: string): number {
   if (message === 'League not found' || message === 'Player not found') {
@@ -38,8 +38,11 @@ export async function POST(
     }
 
     const { leagueId } = await params;
+
+    // Resolve any expired turns before processing this pick
+    await resolveExpiredDraftTurns(leagueId);
+
     const result = await makeDraftPick(leagueId, userId, body.playerId);
-    await broadcastDraftMutation(leagueId, result);
 
     if (!result.pick) {
       throw new Error('Draft pick result was empty');

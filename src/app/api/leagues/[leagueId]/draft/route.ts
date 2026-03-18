@@ -4,6 +4,7 @@ import { prisma } from '@/src/lib/prisma';
 import type { DraftGetResponse, DraftQueueEntry } from '@/src/lib/api-types';
 import { loadLeagueDetailForUser } from '@/src/server/league-service';
 import { toPlayerSummary } from '@/src/server/serializers';
+import { resolveExpiredDraftTurns } from '@/src/server/draft-timer';
 
 export async function GET(
   _request: Request,
@@ -18,6 +19,10 @@ export async function GET(
 
   try {
     const { leagueId } = await params;
+
+    // Lazily resolve any expired draft turns before returning state
+    await resolveExpiredDraftTurns(leagueId);
+
     const league = await loadLeagueDetailForUser(leagueId, userId);
 
     if (!league) {

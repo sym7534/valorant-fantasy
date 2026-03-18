@@ -601,7 +601,11 @@ async function main(): Promise<void> {
   const statPlayerIds = await seedMatchStats(playerNameToId);
   const users = await upsertTestUsers();
   await createSetupLeague(users);
-  await createActiveLeague(users, statPlayerIds);
+  if (statPlayerIds.length >= ACTIVE_LEAGUE_MEMBER_COUNT * ACTIVE_LEAGUE_ROSTER_SIZE) {
+    await createActiveLeague(users, statPlayerIds);
+  } else {
+    console.log('  Skipping active league — not enough players with match stats.');
+  }
 
   console.log('\n=== Seed complete! ===');
 }

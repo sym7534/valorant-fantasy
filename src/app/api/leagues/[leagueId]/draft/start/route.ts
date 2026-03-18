@@ -2,7 +2,6 @@ import { NextResponse } from 'next/server';
 import { auth } from '@/src/lib/auth';
 import type { DraftStartResponse } from '@/src/lib/api-types';
 import { startDraft } from '@/src/server/draft-engine';
-import { broadcastDraftMutation } from '@/src/server/socket';
 
 export async function POST(
   _request: Request,
@@ -18,13 +17,6 @@ export async function POST(
   try {
     const { leagueId } = await params;
     const draft = await startDraft(leagueId, userId);
-
-    await broadcastDraftMutation(leagueId, {
-      draft,
-      pick: null,
-      skippedUserId: null,
-      didComplete: false,
-    });
 
     return NextResponse.json({ draft });
   } catch (error) {

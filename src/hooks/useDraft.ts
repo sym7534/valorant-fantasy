@@ -1,14 +1,11 @@
 'use client';
 
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type {
   DraftGetResponse,
   DraftQueueEntry,
   DraftStateResponse,
-  SocketDraftCompletePayload,
-  SocketDraftTimerPayload,
 } from '@/src/lib/api-types';
-import { useSocket } from '@/src/hooks/useSocket';
 
 type DraftApiError = {
   error?: string;
@@ -29,6 +26,9 @@ type UseDraftReturn = {
   setDraftState: (draft: DraftStateResponse) => void;
 };
 
+const POLL_INTERVAL_ACTIVE = 2000;
+const POLL_INTERVAL_IDLE = 10000;
+
 function filterQueueByDraftState(
   queue: DraftQueueEntry[],
   draft: DraftStateResponse
@@ -48,11 +48,13 @@ function getCurrentPickerUserId(
 }
 
 export function useDraft(leagueId: string, userId: string): UseDraftReturn {
-  const { emit, on, off, isConnected } = useSocket();
   const [data, setData] = useState<DraftGetResponse | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [secondsRemaining, setSecondsRemaining] = useState(0);
+  const lastServerTimeRef = useRef<{ timeRemaining: number; fetchedAt: number } | null>(null);
+  const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
   const refresh = useCallback(async (): Promise<void> => {
     if (!leagueId) {
@@ -60,9 +62,6 @@ export function useDraft(leagueId: string, userId: string): UseDraftReturn {
       setLoading(false);
       return;
     }
-
-    setLoading(true);
-    setError(null);
 
     try {
       const response = await fetch(`/api/leagues/${leagueId}/draft`, {
@@ -78,78 +77,62 @@ export function useDraft(leagueId: string, userId: string): UseDraftReturn {
         ...payload,
         queue: filterQueueByDraftState(payload.queue, payload.draft),
       });
-      setSecondsRemaining(payload.draft.timeRemaining ?? 0);
-    } catch (error) {
-      setError(error instanceof Error ? error.message : 'Failed to load draft');
-    } finally {
-      setLoading(false);
+
+      const serverTime = payload.draft.timeRemaining ?? 0;
+      lastServerTimeRef.current = { timeRemaining: serverTime, fetchedAt: Date.now() };
+      setSecondsRemaining(serverTime);
+      setError(null);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Failed to load draft');
     }
   }, [leagueId]);
 
+  // Initial load
   useEffect(() => {
-    void refresh();
+    setLoading(true);
+    refresh().finally(() => setLoading(false));
   }, [refresh]);
 
+  // Client-side countdown timer (ticks every second based on last server time)
   useEffect(() => {
-    if (!isConnected || !leagueId) {
+    if (timerRef.current) {
+      clearInterval(timerRef.current);
+    }
+
+    timerRef.current = setInterval(() => {
+      if (!lastServerTimeRef.current) return;
+      const elapsed = Math.floor((Date.now() - lastServerTimeRef.current.fetchedAt) / 1000);
+      const remaining = Math.max(0, lastServerTimeRef.current.timeRemaining - elapsed);
+      setSecondsRemaining(remaining);
+    }, 1000);
+
+    return () => {
+      if (timerRef.current) clearInterval(timerRef.current);
+    };
+  }, []);
+
+  // Polling for draft state updates
+  useEffect(() => {
+    if (pollRef.current) {
+      clearInterval(pollRef.current);
+    }
+
+    const isActive = data?.draft.status === 'IN_PROGRESS';
+    const interval = isActive ? POLL_INTERVAL_ACTIVE : POLL_INTERVAL_IDLE;
+
+    // Don't poll if draft is complete or waiting
+    if (data?.draft.status === 'COMPLETE') {
       return;
     }
 
-    emit('draft:join', { leagueId });
-  }, [emit, isConnected, leagueId]);
-
-  useEffect(() => {
-    const handleDraftState = (...args: unknown[]): void => {
-      const [payload] = args;
-      const draft = payload as DraftStateResponse;
-      setData((current) => {
-        if (!current) {
-          return current;
-        }
-
-        return {
-          ...current,
-          draft,
-          queue: filterQueueByDraftState(current.queue, draft),
-        };
-      });
-      setSecondsRemaining(draft.timeRemaining ?? 0);
-    };
-
-    const handleTimer = (...args: unknown[]): void => {
-      const [payload] = args;
-      const timerPayload = payload as SocketDraftTimerPayload;
-      setSecondsRemaining(timerPayload.secondsRemaining);
-    };
-
-    const handleComplete = (...args: unknown[]): void => {
-      const [payload] = args;
-      void (payload as SocketDraftCompletePayload);
-      setData((current) =>
-        current
-          ? {
-              ...current,
-              draft: {
-                ...current.draft,
-                status: 'COMPLETE',
-                timeRemaining: 0,
-              },
-            }
-          : current
-      );
-      setSecondsRemaining(0);
-    };
-
-    on('draft:state', handleDraftState);
-    on('draft:timer', handleTimer);
-    on('draft:complete', handleComplete);
+    pollRef.current = setInterval(() => {
+      void refresh();
+    }, interval);
 
     return () => {
-      off('draft:state', handleDraftState);
-      off('draft:timer', handleTimer);
-      off('draft:complete', handleComplete);
+      if (pollRef.current) clearInterval(pollRef.current);
     };
-  }, [off, on]);
+  }, [data?.draft.status, refresh]);
 
   const currentPickerUserId = useMemo(() => {
     if (!data?.draft || data.draft.status !== 'IN_PROGRESS') {
@@ -192,7 +175,9 @@ export function useDraft(leagueId: string, userId: string): UseDraftReturn {
             }
           : current
       );
-      setSecondsRemaining(payload.draft.timeRemaining ?? 0);
+      const serverTime = payload.draft.timeRemaining ?? 0;
+      lastServerTimeRef.current = { timeRemaining: serverTime, fetchedAt: Date.now() };
+      setSecondsRemaining(serverTime);
     },
     [leagueId]
   );
@@ -234,14 +219,16 @@ export function useDraft(leagueId: string, userId: string): UseDraftReturn {
           }
         : current
     );
-    setSecondsRemaining(draft.timeRemaining ?? 0);
+    const serverTime = draft.timeRemaining ?? 0;
+    lastServerTimeRef.current = { timeRemaining: serverTime, fetchedAt: Date.now() };
+    setSecondsRemaining(serverTime);
   }, []);
 
   return {
     data,
     loading,
     error,
-    isConnected,
+    isConnected: true, // Always "connected" with polling
     isMyTurn: currentPickerUserId === (data?.currentUserId ?? userId),
     currentPickerUserId,
     secondsRemaining,

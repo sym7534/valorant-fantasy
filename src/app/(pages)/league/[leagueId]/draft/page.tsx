@@ -47,7 +47,6 @@ export default function DraftPage(): React.ReactElement {
     data,
     loading,
     error,
-    isConnected,
     isMyTurn,
     currentPickerUserId,
     secondsRemaining,
@@ -199,8 +198,8 @@ export default function DraftPage(): React.ReactElement {
                 {isDraftComplete ? 'Done' : `${secondsRemaining}s`}
               </p>
             </div>
-            <Badge variant={isConnected ? 'success' : 'error'} size="md">
-              {isConnected ? 'Connected' : 'Disconnected'}
+            <Badge variant="success" size="md">
+              Live
             </Badge>
           </div>
         </div>

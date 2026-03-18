@@ -2,7 +2,7 @@
 
 import React from 'react';
 import Image from 'next/image';
-import Link from 'next/link';
+import { signIn } from 'next-auth/react';
 import { useAuth } from '@/src/hooks/useAuth';
 import { useRouter } from 'next/navigation';
 import Button from '@/src/components/ui/Button';
@@ -75,11 +75,14 @@ export default function LandingPage(): React.ReactElement {
             Draft real Valorant Champions Tour professionals, set weekly lineups, and compete with friends in the ultimate fantasy esports experience.
           </p>
 
-          <Link href="/api/auth/signin">
-            <Button variant="primary" size="lg" className="text-lg px-10 py-4">
-              Sign In with Google
-            </Button>
-          </Link>
+          <Button
+            variant="primary"
+            size="lg"
+            className="text-lg px-10 py-4"
+            onClick={() => signIn('google', { callbackUrl: '/dashboard' })}
+          >
+            Sign In with Google
+          </Button>
         </div>
       </section>
 
